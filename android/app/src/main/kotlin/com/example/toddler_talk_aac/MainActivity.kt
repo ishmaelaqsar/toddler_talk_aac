@@ -1,4 +1,4 @@
-package com.example.my_voice_aac
+package com.example.toddler_talk_aac
 
 import io.flutter.embedding.android.FlutterActivity
 

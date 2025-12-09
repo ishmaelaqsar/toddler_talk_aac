@@ -1,6 +1,6 @@
 {
-    "name": "my_voice_aac",
-    "short_name": "my_voice_aac",
+    "name": "toddler_talk_aac",
+    "short_name": "toddler_talk_aac",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

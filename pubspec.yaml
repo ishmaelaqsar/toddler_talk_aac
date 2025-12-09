@@ -1,4 +1,4 @@
-name: my_voice_aac
+name: toddler_talk_aac
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -30,16 +30,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # Speech capability
   flutter_tts: ^3.8.3
-  # Camera and Gallery access
   image_picker: ^1.0.4
-  # File storage helper
   path_provider: ^2.1.1
-  # Simple database to save custom cards
   shared_preferences: ^2.2.1
-  # Unique IDs for cards
   uuid: ^4.2.1
+  archive: ^3.3.7
+  share_plus: ^7.2.1
+  file_picker: ^6.1.1
+  path: ^1.8.3
 
 dev_dependencies:
   flutter_test:

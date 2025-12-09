@@ -1,79 +1,50 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:toddler_talk_aac/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:my_voice_aac/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    // Mock Database (SharedPreferences)
+    // Mock standard dependencies
     SharedPreferences.setMockInitialValues({});
-
-    // Mock File System (path_provider)
-    const MethodChannel channelPath = MethodChannel(
+    const MethodChannel(
       'plugins.flutter.io/path_provider',
-    );
-    channelPath.setMockMethodCallHandler((MethodCall methodCall) async => ".");
+    ).setMockMethodCallHandler((c) async => ".");
+    const MethodChannel('flutter_tts').setMockMethodCallHandler((c) async => 1);
 
-    // Mock Text-to-Speech (flutter_tts)
-    const MethodChannel channelTTS = MethodChannel('flutter_tts');
-    channelTTS.setMockMethodCallHandler((MethodCall methodCall) async => 1);
+    // Mock new dependencies to prevent crash
+    const MethodChannel(
+      'dev.fluttercommunity.plus/share',
+    ).setMockMethodCallHandler((c) async => null);
   });
 
-  testWidgets('App loads and Core Vocabulary is visible', (
+  testWidgets('App starts in Toddler Mode (Safe Mode)', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const MyVoiceApp());
-
-    expect(find.text('My Voice'), findsOneWidget);
-    expect(find.text('I'), findsOneWidget);
-    expect(find.text('Want'), findsOneWidget);
+    await tester.pumpWidget(const ToddlerTalkApp());
+    expect(find.byIcon(Icons.add_a_photo), findsNothing);
+    expect(find.text("Hungry"), findsOneWidget);
   });
 
-  testWidgets('Tapping a card adds it to the Sentence Strip', (
+  testWidgets('Long Press unlocks Mom Mode and Settings', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const MyVoiceApp());
+    await tester.pumpWidget(const ToddlerTalkApp());
 
-    // Tap "Want"
-    await tester.tap(find.text('Want'));
+    final lockIcon = find.byIcon(Icons.lock);
+
+    // Unlock
+    await tester.longPress(lockIcon);
     await tester.pump();
 
-    // Identify the "Go" button
-    final goButton = find.text('Go');
+    // Check for "Mom Mode" UI
+    expect(find.text("Mom Mode"), findsOneWidget);
+    expect(find.byIcon(Icons.add_a_photo), findsOneWidget);
 
-    // Scroll until "Go" is visible, targeting the GridView (the last scrollable widget)
-    await tester.scrollUntilVisible(
-      goButton,
-      500.0,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.pumpAndSettle();
-
-    // Tap "Go"
-    await tester.tap(goButton);
-    await tester.pump();
-
-    // Verify both are now in the Sentence Strip (Grid copy + Strip copy = 2)
-    expect(find.text('Want'), findsNWidgets(2));
-    expect(find.text('Go'), findsNWidgets(2));
-  });
-
-  testWidgets('Delete button only appears in Edit Mode', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(const MyVoiceApp());
-
-    // Ensure delete icon is NOT there initially
-    expect(find.byIcon(Icons.delete), findsNothing);
-
-    // Enter Edit Mode
-    await tester.tap(find.byIcon(Icons.edit));
-    await tester.pump();
-
-    // Verify toggle changed
-    expect(find.byIcon(Icons.edit_off), findsOneWidget);
+    // Check for Settings Icon (Backup/Restore menu)
+    expect(find.byIcon(Icons.settings), findsOneWidget);
   });
 }
