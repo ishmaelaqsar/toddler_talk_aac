@@ -64,8 +64,6 @@ jobs:
         run: flutter pub get
 
       # KEY STEP: Sign with Debug Key for Sideloading
-      # By default, release builds need a secure key. For your personal use,
-      # we force it to use the "Debug Key" so it installs without errors.
       - name: Configure Signing for Sideload
         run: |
           sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.debug/g' android/app/build.gradle || true
@@ -73,11 +71,15 @@ jobs:
       - name: Build APK
         run: flutter build apk --release
 
+      - name: Rename APK
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/ToddlerTalk-${{ inputs.version }}.apk
+
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ inputs.version }}
           name: Release ${{ inputs.version }}
-          artifacts: "build/app/outputs/flutter-apk/app-release.apk"
+          artifacts: "build/app/outputs/flutter-apk/ToddlerTalk-${{ inputs.version }}.apk"
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
