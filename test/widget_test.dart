@@ -10,15 +10,25 @@ void main() {
   setUp(() {
     // Mock standard dependencies
     SharedPreferences.setMockInitialValues({});
-    const MethodChannel(
-      'plugins.flutter.io/path_provider',
-    ).setMockMethodCallHandler((c) async => ".");
-    const MethodChannel('flutter_tts').setMockMethodCallHandler((c) async => 1);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (MethodCall methodCall) async => ".",
+    );
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('flutter_tts'),
+      (MethodCall methodCall) async => 1,
+    );
 
     // Mock new dependencies to prevent crash
-    const MethodChannel(
-      'dev.fluttercommunity.plus/share',
-    ).setMockMethodCallHandler((c) async => null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('dev.fluttercommunity.plus/share'),
+      (MethodCall methodCall) async => null,
+    );
   });
 
   testWidgets('App starts in Toddler Mode (Safe Mode)', (
