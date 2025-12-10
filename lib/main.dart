@@ -48,6 +48,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> customCards = [];
   bool isAdminMode = false;
 
+  // Track which card is currently being touched for visual feedback
+  String? _activeCardId;
+
   // TODDLER CORE VOCABULARY
   final List<Map<String, dynamic>> coreWords = [
     {"id": "c1", "label": "Hungry", "color": 0xFFFFCC80, "icon": "🍎"},
@@ -96,11 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     try {
-      // 1. Create the Archive
       final archive = Archive();
       final appDir = await getApplicationDocumentsDirectory();
-
-      // 2. Create a "Portable" JSON (images stored as filenames only, not full paths)
       List<Map<String, dynamic>> portableList = [];
 
       for (var card in customCards) {
@@ -108,32 +108,28 @@ class _HomeScreenState extends State<HomeScreen> {
         final String filename = p.basename(card['imagePath']);
 
         if (await imageFile.exists()) {
-          // Add image to Zip
           final List<int> bytes = await imageFile.readAsBytes();
           archive.addFile(ArchiveFile(filename, bytes.length, bytes));
 
-          // Add to portable list
           Map<String, dynamic> portableCard = Map.from(card);
-          portableCard['imagePath'] = filename; // Store relative path
+          portableCard['imagePath'] = filename;
           portableList.add(portableCard);
         }
       }
 
-      // 3. Add JSON data to Zip
       final String jsonStr = jsonEncode(portableList);
       archive.addFile(
         ArchiveFile('data.json', jsonStr.length, utf8.encode(jsonStr)),
       );
 
-      // 4. Save Zip to Disk
       final ZipEncoder encoder = ZipEncoder();
       final File zipFile = File('${appDir.path}/toddler_talk_backup.zip');
-      await zipFile.writeAsBytes(encoder.encode(archive)!);
 
-      // 5. Share the File
-      await Share.shareXFiles([
-        XFile(zipFile.path),
-      ], text: 'Toddler Talk Backup');
+      await zipFile.writeAsBytes(encoder.encode(archive));
+
+      await SharePlus.instance.share(
+        ShareParams(text: 'Toddler Talk Backup', files: [XFile(zipFile.path)]),
+      );
     } catch (e) {
       _speak("Backup failed");
       debugPrint("Backup Error: $e");
@@ -142,7 +138,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _restoreData() async {
     try {
-      // 1. Pick File
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['zip'],
@@ -153,40 +148,50 @@ class _HomeScreenState extends State<HomeScreen> {
       final File zipFile = File(result.files.single.path!);
       final appDir = await getApplicationDocumentsDirectory();
 
-      // 2. Unzip
       final bytes = await zipFile.readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
 
-      List<Map<String, dynamic>> newCards = [];
+      List<Map<String, dynamic>> importedCards = [];
 
+      // 1. Unzip Files
       for (final file in archive) {
         if (file.isFile) {
           final data = file.content as List<int>;
           if (file.name == 'data.json') {
-            // This is the data file, parse it later
             String jsonStr = utf8.decode(data);
             List<dynamic> jsonList = jsonDecode(jsonStr);
-            newCards = List<Map<String, dynamic>>.from(jsonList);
+            importedCards = List<Map<String, dynamic>>.from(jsonList);
           } else {
-            // This is an image, save it to App Directory
+            // Check if we already have this image to avoid duplicates
             File outFile = File('${appDir.path}/${file.name}');
-            await outFile.create(recursive: true);
-            await outFile.writeAsBytes(data);
+            if (!await outFile.exists()) {
+              await outFile.create(recursive: true);
+              await outFile.writeAsBytes(data);
+            }
           }
         }
       }
 
-      // 3. Fix Paths in Data (Reconnect relative filenames to new absolute paths)
-      for (var card in newCards) {
+      // 2. Fix Paths
+      for (var card in importedCards) {
         card['imagePath'] = '${appDir.path}/${card['imagePath']}';
       }
 
-      // 4. Update State
+      // 3. MERGE LOGIC: Add only if ID doesn't exist
+      int addedCount = 0;
       setState(() {
-        customCards = newCards;
+        for (var newCard in importedCards) {
+          // Check if a card with this ID already exists
+          final bool exists = customCards.any((c) => c['id'] == newCard['id']);
+          if (!exists) {
+            customCards.add(newCard);
+            addedCount++;
+          }
+        }
       });
+
       _saveCustomCards();
-      _speak("Restore complete");
+      _speak(addedCount > 0 ? "Added $addedCount items" : "No new items found");
     } catch (e) {
       _speak("Restore failed");
       debugPrint("Restore Error: $e");
@@ -199,8 +204,24 @@ class _HomeScreenState extends State<HomeScreen> {
     flutterTts.speak(text);
   }
 
+  void _handleCardTap(String id, String label) {
+    setState(() => _activeCardId = id);
+    _speak(label);
+
+    // Visual reset after animation
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) setState(() => _activeCardId = null);
+    });
+  }
+
   Future<void> _addNewCard() async {
-    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+    final XFile? photo = await _picker.pickImage(
+      source: ImageSource.camera,
+      maxWidth: 800, // Limit size for performance/backup
+      maxHeight: 800,
+      imageQuality: 85,
+    );
+
     if (photo == null) return;
 
     final directory = await getApplicationDocumentsDirectory();
@@ -217,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> {
         "label": label,
         "imagePath": path,
         "isCustom": true,
+        "isVisible": true,
       });
     });
     _saveCustomCards();
@@ -224,6 +246,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _deleteCard(int index) async {
     setState(() => customCards.removeAt(index));
+    _saveCustomCards();
+  }
+
+  void _toggleVisibility(int index) {
+    setState(() {
+      bool current = customCards[index]['isVisible'] ?? true;
+      customCards[index]['isVisible'] = !current;
+    });
     _saveCustomCards();
   }
 
@@ -269,7 +299,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? const Text("Mom Mode", style: TextStyle(color: Colors.red))
                 : const Text("Toddler Talk"),
             actions: [
-              // ADMIN MENU (Only visible in Mom Mode)
               if (isAdminMode)
                 PopupMenuButton<String>(
                   onSelected: (value) {
@@ -284,22 +313,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const PopupMenuItem(
                         value: 'restore',
-                        child: Text('Restore Data'),
+                        child: Text('Restore/Merge Data'),
                       ),
                     ];
                   },
                   icon: const Icon(Icons.settings, color: Colors.black),
                 ),
-
-              // THE SAFETY LOCK
               GestureDetector(
                 onLongPress: () {
                   setState(() => isAdminMode = !isAdminMode);
-                  if (isAdminMode) {
-                    _speak("Editing Mode On");
-                  } else {
-                    _speak("Locked");
-                  }
+                  _speak(isAdminMode ? "Editing Mode On" : "Locked");
                 },
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -324,9 +347,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   children: [
                     ...coreWords.map((word) => _buildCard(word)),
-                    ...customCards.asMap().entries.map(
-                      (e) => _buildCustomCard(e.value, e.key),
-                    ),
+                    // Filter hidden cards UNLESS we are in Admin Mode
+                    ...customCards
+                        .asMap()
+                        .entries
+                        .where(
+                          (e) => isAdminMode || (e.value['isVisible'] ?? true),
+                        )
+                        .map((e) => _buildCustomCard(e.value, e.key)),
                     if (isAdminMode) _buildAddButton(),
                   ],
                 ),
@@ -339,90 +367,129 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCard(Map<String, dynamic> data) {
+    final bool isActive = _activeCardId == data['id'];
+
     return GestureDetector(
-      onTap: () {
-        _speak(data['label']);
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: Color(data['color']),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 6,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(data['icon'], style: const TextStyle(fontSize: 60)),
-            const SizedBox(height: 8),
-            Text(
-              data['label'],
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
+      onTapDown: (_) => setState(() => _activeCardId = data['id']),
+      onTapUp: (_) => _handleCardTap(data['id'], data['label']),
+      onTapCancel: () => setState(() => _activeCardId = null),
+      child: AnimatedScale(
+        scale: isActive ? 0.95 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Color(data['color']),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.1),
+                blurRadius: 6,
+                offset: const Offset(0, 4),
               ),
-            ),
-          ],
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(data['icon'], style: const TextStyle(fontSize: 60)),
+              const SizedBox(height: 8),
+              Text(
+                data['label'],
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildCustomCard(Map<String, dynamic> data, int index) {
+    final bool isActive = _activeCardId == data['id'];
+    final bool isVisible = data['isVisible'] ?? true;
+
     return Stack(
       children: [
         GestureDetector(
-          onTap: () => _speak(data['label']),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.blue.shade100, width: 4),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.file(File(data['imagePath']), fit: BoxFit.cover),
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      color: Colors.white.withValues(alpha: 0.8),
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Text(
-                        data['label'],
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
+          onTapDown: (_) => setState(() => _activeCardId = data['id']),
+          onTapUp: (_) => _handleCardTap(data['id'], data['label']),
+          onTapCancel: () => setState(() => _activeCardId = null),
+          child: AnimatedScale(
+            scale: isActive ? 0.95 : 1.0,
+            duration: const Duration(milliseconds: 100),
+            child: Container(
+              // Dim the card if it is "Hidden" in Admin Mode
+              foregroundDecoration: (isAdminMode && !isVisible)
+                  ? BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(24),
+                    )
+                  : null,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: Colors.blue.shade100, width: 4),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.file(File(data['imagePath']), fit: BoxFit.cover),
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Text(
+                          data['label'],
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
-        if (isAdminMode)
+        if (isAdminMode) ...[
+          // DELETE BUTTON
           Positioned(
             right: 0,
             top: 0,
             child: FloatingActionButton.small(
+              heroTag: "del_$index",
               backgroundColor: Colors.red,
               onPressed: () => _deleteCard(index),
               child: const Icon(Icons.close, color: Colors.white),
             ),
           ),
+          // HIDE/SHOW TOGGLE BUTTON
+          Positioned(
+            left: 0,
+            top: 0,
+            child: FloatingActionButton.small(
+              heroTag: "hide_$index",
+              backgroundColor: isVisible ? Colors.blue : Colors.grey,
+              onPressed: () => _toggleVisibility(index),
+              child: Icon(
+                isVisible ? Icons.visibility : Icons.visibility_off,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -434,11 +501,7 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Colors.grey[200],
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: Colors.grey.shade400,
-            width: 2,
-            style: BorderStyle.solid,
-          ),
+          border: Border.all(color: Colors.grey.shade400, width: 2),
         ),
         child: const Center(
           child: Icon(Icons.add_a_photo, size: 50, color: Colors.grey),

@@ -30,14 +30,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_tts: ^3.8.3
+  flutter_tts: ^4.2.3
   image_picker: ^1.0.4
   path_provider: ^2.1.1
   shared_preferences: ^2.2.1
   uuid: ^4.2.1
-  archive: ^3.3.7
-  share_plus: ^7.2.1
-  file_picker: ^6.1.1
+  archive: ^4.0.7
+  share_plus: ^12.0.1
+  file_picker: ^10.3.7
   path: ^1.8.3
 
 dev_dependencies:
