@@ -1,18 +1,25 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive_io.dart'; // For Zipping
-import 'package:file_picker/file_picker.dart'; // For Import
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle, AssetManifest;
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:giphy_get/giphy_get.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p; // For filename manipulation
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart'; // For Exporting
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
+import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:path/path.dart' as p;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+Future<void> main() async {
+  await dotenv.load(fileName: ".env");
   runApp(const ToddlerTalkApp());
 }
 
@@ -43,31 +50,41 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final FlutterTts flutterTts = FlutterTts();
+  final AudioPlayer audioPlayer = AudioPlayer();
   final ImagePicker _picker = ImagePicker();
 
-  List<Map<String, dynamic>> customCards = [];
-  bool isAdminMode = false;
+  final String giphyApiKey = dotenv.env['GIPHY_API_KEY'] ?? "";
 
-  // Track which card is currently being touched for visual feedback
+  List<Map<String, dynamic>> allCards = [];
+  bool isAdminMode = false;
   String? _activeCardId;
 
-  // TODDLER CORE VOCABULARY
-  final List<Map<String, dynamic>> coreWords = [
-    {"id": "c1", "label": "Hungry", "color": 0xFFFFCC80, "icon": "🍎"},
-    {"id": "c2", "label": "Thirsty", "color": 0xFF81D4FA, "icon": "🥤"},
-    {"id": "c3", "label": "Play", "color": 0xFFA5D6A7, "icon": "🧸"},
-    {"id": "c4", "label": "Sleep", "color": 0xFFCE93D8, "icon": "💤"},
-    {"id": "c5", "label": "Yes", "color": 0xFFC5E1A5, "icon": "👍"},
-    {"id": "c6", "label": "No", "color": 0xFFEF9A9A, "icon": "👎"},
-    {"id": "c7", "label": "More", "color": 0xFFFFF59D, "icon": "➕"},
-    {"id": "c8", "label": "All Done", "color": 0xFFB0BEC5, "icon": "🙅"},
+  final List<Map<String, dynamic>> defaultCards = [
+    {
+      "label": "Hungry",
+      "color": 0xFFFFCC80,
+      "type": "asset",
+      "content": "assets/symbols/dinner.svg",
+    },
+    {
+      "label": "Thirsty",
+      "color": 0xFF81D4FA,
+      "type": "asset",
+      "content": "assets/symbols/water.svg",
+    },
+    {
+      "label": "Play",
+      "color": 0xFFA5D6A7,
+      "type": "asset",
+      "content": "assets/symbols/lego.svg",
+    },
   ];
 
   @override
   void initState() {
     super.initState();
     _initTTS();
-    _loadCustomCards();
+    _loadCards();
   }
 
   void _initTTS() async {
@@ -75,254 +92,323 @@ class _HomeScreenState extends State<HomeScreen> {
     await flutterTts.setSpeechRate(0.5);
   }
 
-  Future<void> _loadCustomCards() async {
+  Future<void> _loadCards() async {
     final prefs = await SharedPreferences.getInstance();
-    final String? storedData = prefs.getString('toddler_cards');
+    final String? storedData = prefs.getString('toddler_cards_v5');
+
     if (storedData != null) {
       setState(() {
-        customCards = List<Map<String, dynamic>>.from(json.decode(storedData));
+        allCards = List<Map<String, dynamic>>.from(json.decode(storedData));
       });
-    }
-  }
-
-  Future<void> _saveCustomCards() async {
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setString('toddler_cards', json.encode(customCards));
-  }
-
-  // --- BACKUP & RESTORE LOGIC ---
-
-  Future<void> _backupData() async {
-    if (customCards.isEmpty) {
-      _speak("Nothing to backup");
-      return;
-    }
-
-    try {
-      final archive = Archive();
-      final appDir = await getApplicationDocumentsDirectory();
-      List<Map<String, dynamic>> portableList = [];
-
-      for (var card in customCards) {
-        final File imageFile = File(card['imagePath']);
-        final String filename = p.basename(card['imagePath']);
-
-        if (await imageFile.exists()) {
-          final List<int> bytes = await imageFile.readAsBytes();
-          archive.addFile(ArchiveFile(filename, bytes.length, bytes));
-
-          Map<String, dynamic> portableCard = Map.from(card);
-          portableCard['imagePath'] = filename;
-          portableList.add(portableCard);
-        }
-      }
-
-      final String jsonStr = jsonEncode(portableList);
-      archive.addFile(
-        ArchiveFile('data.json', jsonStr.length, utf8.encode(jsonStr)),
-      );
-
-      final ZipEncoder encoder = ZipEncoder();
-      final File zipFile = File('${appDir.path}/toddler_talk_backup.zip');
-
-      await zipFile.writeAsBytes(encoder.encode(archive));
-
-      await SharePlus.instance.share(
-        ShareParams(text: 'Toddler Talk Backup', files: [XFile(zipFile.path)]),
-      );
-    } catch (e) {
-      _speak("Backup failed");
-      debugPrint("Backup Error: $e");
-    }
-  }
-
-  Future<void> _restoreData() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['zip'],
-      );
-
-      if (result == null) return;
-
-      final File zipFile = File(result.files.single.path!);
-      final appDir = await getApplicationDocumentsDirectory();
-
-      final bytes = await zipFile.readAsBytes();
-      final archive = ZipDecoder().decodeBytes(bytes);
-
-      List<Map<String, dynamic>> importedCards = [];
-
-      // 1. Unzip Files
-      for (final file in archive) {
-        if (file.isFile) {
-          final data = file.content as List<int>;
-          if (file.name == 'data.json') {
-            String jsonStr = utf8.decode(data);
-            List<dynamic> jsonList = jsonDecode(jsonStr);
-            importedCards = List<Map<String, dynamic>>.from(jsonList);
-          } else {
-            // Check if we already have this image to avoid duplicates
-            File outFile = File('${appDir.path}/${file.name}');
-            if (!await outFile.exists()) {
-              await outFile.create(recursive: true);
-              await outFile.writeAsBytes(data);
-            }
-          }
-        }
-      }
-
-      // 2. Fix Paths
-      for (var card in importedCards) {
-        card['imagePath'] = '${appDir.path}/${card['imagePath']}';
-      }
-
-      // 3. MERGE LOGIC: Add only if ID doesn't exist
-      int addedCount = 0;
+    } else {
       setState(() {
-        for (var newCard in importedCards) {
-          // Check if a card with this ID already exists
-          final bool exists = customCards.any((c) => c['id'] == newCard['id']);
-          if (!exists) {
-            customCards.add(newCard);
-            addedCount++;
-          }
-        }
+        allCards = defaultCards.map((c) {
+          return {
+            "id": const Uuid().v4(),
+            "label": c['label'],
+            "color": c['color'],
+            "type": c['type'],
+            "content": c['content'],
+            "audioPath": null,
+            "isVisible": true,
+          };
+        }).toList();
       });
-
-      _saveCustomCards();
-      _speak(addedCount > 0 ? "Added $addedCount items" : "No new items found");
-    } catch (e) {
-      _speak("Restore failed");
-      debugPrint("Restore Error: $e");
+      _saveCards();
     }
   }
 
-  // --- ACTIONS ---
-
-  void _speak(String text) {
-    flutterTts.speak(text);
+  Future<void> _saveCards() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('toddler_cards_v5', json.encode(allCards));
   }
 
-  void _handleCardTap(String id, String label) {
-    setState(() => _activeCardId = id);
-    _speak(label);
+  Future<void> _handleCardTap(Map<String, dynamic> card) async {
+    setState(() => _activeCardId = card['id']);
 
-    // Visual reset after animation
+    if (card['audioPath'] != null && File(card['audioPath']).existsSync()) {
+      await audioPlayer.play(DeviceFileSource(card['audioPath']));
+    } else {
+      flutterTts.speak(card['label']);
+    }
+
     Future.delayed(const Duration(milliseconds: 200), () {
       if (mounted) setState(() => _activeCardId = null);
     });
   }
 
+  // --- ACTIONS: ADD NEW CARD ---
+
   Future<void> _addNewCard() async {
-    final XFile? photo = await _picker.pickImage(
-      source: ImageSource.camera,
-      maxWidth: 800, // Limit size for performance/backup
-      maxHeight: 800,
-      imageQuality: 85,
-    );
-
-    if (photo == null) return;
-
-    final directory = await getApplicationDocumentsDirectory();
-    final String path = '${directory.path}/${const Uuid().v4()}.jpg';
-    await photo.saveTo(path);
-
-    if (!mounted) return;
-    String? label = await _showLabelDialog();
-    if (label == null || label.isEmpty) return;
-
-    setState(() {
-      customCards.add({
-        "id": const Uuid().v4(),
-        "label": label,
-        "imagePath": path,
-        "isCustom": true,
-        "isVisible": true,
-      });
-    });
-    _saveCustomCards();
-  }
-
-  Future<void> _deleteCard(int index) async {
-    setState(() => customCards.removeAt(index));
-    _saveCustomCards();
-  }
-
-  void _toggleVisibility(int index) {
-    setState(() {
-      bool current = customCards[index]['isVisible'] ?? true;
-      customCards[index]['isVisible'] = !current;
-    });
-    _saveCustomCards();
-  }
-
-  Future<String?> _showLabelDialog() {
-    TextEditingController controller = TextEditingController();
-    return showDialog<String>(
+    final String? source = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("What is this?"),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
+      builder: (ctx) => SimpleDialog(
+        title: const Text("Create Card From..."),
+        children: [
+          ListTile(
+            leading: const Icon(Icons.gif_box, color: Colors.purple),
+            title: const Text("Giphy Search"),
+            subtitle: const Text("Search animated GIFs"),
+            onTap: () => Navigator.pop(ctx, 'giphy'),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text("Save"),
+          ListTile(
+            leading: const Icon(Icons.grid_view, color: Colors.orange),
+            title: const Text("Symbol Library"),
+            onTap: () => Navigator.pop(ctx, 'library'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.camera_alt, color: Colors.blue),
+            title: const Text("Take Photo"),
+            onTap: () => Navigator.pop(ctx, 'camera'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library, color: Colors.green),
+            title: const Text("Photo Gallery"),
+            subtitle: const Text("Supports GIFs"),
+            onTap: () => Navigator.pop(ctx, 'gallery'),
           ),
         ],
       ),
     );
+
+    if (source == null) return;
+    // FIX 1: Check mounted after the async gap (showDialog)
+    if (!mounted) return;
+
+    String? content;
+    String type = 'image';
+    String initialLabel = "";
+
+    // 1. GIPHY SEARCH
+    if (source == 'giphy') {
+      if (giphyApiKey == "YOUR_GIPHY_API_KEY_HERE" || giphyApiKey.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Please set your Giphy API Key in .env file first!",
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      // We are safe to use context here because we checked !mounted above
+      GiphyGif? gif = await GiphyGet.getGif(
+        context: context,
+        apiKey: giphyApiKey,
+        tabColor: Colors.teal,
+      );
+
+      // FIX 2: Simplify null check to avoid 'unnecessary bang' warnings
+      final String? gifUrl = gif?.images?.original?.url;
+
+      if (gifUrl != null) {
+        // Download the GIF for offline use
+        final String? localPath = await _downloadFile(gifUrl);
+        if (localPath == null) return;
+
+        content = localPath;
+        type = 'image';
+        initialLabel = gif?.title?.split("GIF")[0].trim() ?? "Gif";
+      } else {
+        return;
+      }
+    }
+    // 2. SYMBOL LIBRARY
+    else if (source == 'library') {
+      final String? selectedPath = await _pickSymbolFromAssets();
+      if (selectedPath == null) return;
+
+      content = selectedPath;
+      type = 'asset';
+      initialLabel = p
+          .basenameWithoutExtension(selectedPath)
+          .replaceAll('_', ' ')
+          .replaceAll('-', ' ');
+    }
+    // 3. CAMERA / GALLERY
+    else {
+      if (source == 'camera') {
+        if (await Permission.camera.request().isDenied) return;
+      }
+
+      final XFile? photo = await _picker.pickImage(
+        source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+      );
+      if (photo == null) return;
+
+      final directory = await getApplicationDocumentsDirectory();
+      final String ext = p.extension(photo.path);
+      final String path = '${directory.path}/${const Uuid().v4()}$ext';
+
+      await photo.saveTo(path);
+      content = path;
+      type = 'image';
+    }
+
+    if (!mounted) return;
+
+    // Formatting label
+    if (initialLabel.isNotEmpty && initialLabel.length > 1) {
+      initialLabel = initialLabel[0].toUpperCase() + initialLabel.substring(1);
+    }
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _CardEditorDialog(initialLabel: initialLabel),
+    );
+
+    if (result == null) return;
+
+    setState(() {
+      allCards.add({
+        "id": const Uuid().v4(),
+        "label": result['label'],
+        "type": type,
+        "content": content,
+        "audioPath": result['audioPath'],
+        "color": 0xFFFFFFFF,
+        "isVisible": true,
+      });
+    });
+    _saveCards();
   }
 
-  // --- UI ---
+  // --- HELPER: DOWNLOAD FILE ---
+  Future<String?> _downloadFile(String url) async {
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final directory = await getApplicationDocumentsDirectory();
+        final String path = '${directory.path}/${const Uuid().v4()}.gif';
+        final File file = File(path);
+        await file.writeAsBytes(response.bodyBytes);
+        return path;
+      }
+    } catch (e) {
+      debugPrint("Download error: $e");
+    }
+    return null;
+  }
 
+  Future<String?> _pickSymbolFromAssets() async {
+    final AssetManifest assetManifest = await AssetManifest.loadFromAssetBundle(
+      rootBundle,
+    );
+    final List<String> symbols = assetManifest
+        .listAssets()
+        .where(
+          (key) => key.startsWith('assets/symbols/') && key.endsWith('.svg'),
+        )
+        .toList();
+
+    if (!mounted) return null;
+
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.8,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (context, scrollController) {
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  "Choose a Symbol (${symbols.length})",
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: symbols.isEmpty
+                    ? const Center(
+                        child: Text("No symbols found in assets/symbols/"),
+                      )
+                    : GridView.builder(
+                        controller: scrollController,
+                        padding: const EdgeInsets.all(16),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 4,
+                              crossAxisSpacing: 10,
+                              mainAxisSpacing: 10,
+                            ),
+                        itemCount: symbols.length,
+                        itemBuilder: (context, index) {
+                          final path = symbols[index];
+                          final name = p.basenameWithoutExtension(path);
+                          return GestureDetector(
+                            onTap: () => Navigator.pop(ctx, path),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[200],
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: SvgPicture.asset(path),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // --- UI CONSTRUCTION ---
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final bool isTablet = constraints.maxWidth > 600;
-        final int gridColumns = isTablet ? 3 : 2;
+        final int gridColumns = constraints.maxWidth > 600 ? 3 : 2;
 
         return Scaffold(
           appBar: AppBar(
-            backgroundColor: Colors.white,
-            elevation: 0,
             title: isAdminMode
-                ? const Text("Mom Mode", style: TextStyle(color: Colors.red))
+                ? const Text(
+                    "Mom Mode (Edit)",
+                    style: TextStyle(color: Colors.red),
+                  )
                 : const Text("Toddler Talk"),
             actions: [
               if (isAdminMode)
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'backup') _backupData();
-                    if (value == 'restore') _restoreData();
-                  },
-                  itemBuilder: (BuildContext context) {
-                    return [
-                      const PopupMenuItem(
-                        value: 'backup',
-                        child: Text('Backup Data'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'restore',
-                        child: Text('Restore/Merge Data'),
-                      ),
-                    ];
-                  },
-                  icon: const Icon(Icons.settings, color: Colors.black),
+                IconButton(
+                  icon: const Icon(
+                    Icons.add_circle,
+                    size: 32,
+                    color: Colors.blue,
+                  ),
+                  onPressed: _addNewCard,
                 ),
               GestureDetector(
                 onLongPress: () {
                   setState(() => isAdminMode = !isAdminMode);
-                  _speak(isAdminMode ? "Editing Mode On" : "Locked");
+                  if (isAdminMode) flutterTts.speak("Editing Mode");
                 },
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -334,179 +420,242 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          body: Column(
-            children: [
-              Expanded(
-                child: GridView(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: gridColumns,
-                    childAspectRatio: 1.0,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                  ),
-                  children: [
-                    ...coreWords.map((word) => _buildCard(word)),
-                    // Filter hidden cards UNLESS we are in Admin Mode
-                    ...customCards
-                        .asMap()
-                        .entries
-                        .where(
-                          (e) => isAdminMode || (e.value['isVisible'] ?? true),
-                        )
-                        .map((e) => _buildCustomCard(e.value, e.key)),
-                    if (isAdminMode) _buildAddButton(),
-                  ],
-                ),
-              ),
-            ],
+          body: ReorderableGridView.builder(
+            padding: const EdgeInsets.all(16),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: gridColumns,
+              childAspectRatio: 1.0,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+            ),
+            itemCount: allCards.length,
+            onReorder: (oldIndex, newIndex) {
+              setState(() {
+                final item = allCards.removeAt(oldIndex);
+                allCards.insert(newIndex, item);
+              });
+              _saveCards();
+            },
+            dragWidgetBuilderV2: DragWidgetBuilderV2(
+              builder: (index, child, screenshot) {
+                return isAdminMode ? child : const SizedBox.shrink();
+              },
+            ),
+            itemBuilder: (context, index) {
+              final card = allCards[index];
+              return Container(
+                key: ValueKey(card['id']),
+                child: _buildCardWidget(card, index),
+              );
+            },
           ),
         );
       },
     );
   }
 
-  Widget _buildCard(Map<String, dynamic> data) {
-    final bool isActive = _activeCardId == data['id'];
+  Widget _buildCardWidget(Map<String, dynamic> card, int index) {
+    Widget contentWidget;
 
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _activeCardId = data['id']),
-      onTapUp: (_) => _handleCardTap(data['id'], data['label']),
-      onTapCancel: () => setState(() => _activeCardId = null),
-      child: AnimatedScale(
-        scale: isActive ? 0.95 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Color(data['color']),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 6,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(data['icon'], style: const TextStyle(fontSize: 60)),
-              const SizedBox(height: 8),
-              Text(
-                data['label'],
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-            ],
-          ),
+    if (card['type'] == 'asset') {
+      contentWidget = Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: SvgPicture.asset(
+          card['content'],
+          fit: BoxFit.contain,
+          placeholderBuilder: (_) =>
+              const Icon(Icons.broken_image, size: 50, color: Colors.grey),
         ),
-      ),
-    );
-  }
+      );
+    } else if (card['type'] == 'image') {
+      // Image.file supports Animated GIFs natively!
+      contentWidget = Image.file(
+        File(card['content']),
+        fit: BoxFit.cover,
+        errorBuilder: (ctx, err, stack) =>
+            const Icon(Icons.error, color: Colors.red),
+      );
+    } else {
+      contentWidget = Center(
+        child: Text(card['content'], style: const TextStyle(fontSize: 70)),
+      );
+    }
 
-  Widget _buildCustomCard(Map<String, dynamic> data, int index) {
-    final bool isActive = _activeCardId == data['id'];
-    final bool isVisible = data['isVisible'] ?? true;
+    final double scale = (_activeCardId == card['id']) ? 0.95 : 1.0;
 
     return Stack(
       children: [
         GestureDetector(
-          onTapDown: (_) => setState(() => _activeCardId = data['id']),
-          onTapUp: (_) => _handleCardTap(data['id'], data['label']),
+          onTapDown: isAdminMode
+              ? null
+              : (_) => setState(() => _activeCardId = card['id']),
+          onTapUp: isAdminMode ? null : (_) => _handleCardTap(card),
           onTapCancel: () => setState(() => _activeCardId = null),
-          child: AnimatedScale(
-            scale: isActive ? 0.95 : 1.0,
+          child: AnimatedContainer(
             duration: const Duration(milliseconds: 100),
-            child: Container(
-              // Dim the card if it is "Hidden" in Admin Mode
-              foregroundDecoration: (isAdminMode && !isVisible)
-                  ? BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(24),
-                    )
-                  : null,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: Colors.blue.shade100, width: 4),
+            transform: Matrix4.diagonal3Values(scale, scale, 1.0),
+            decoration: BoxDecoration(
+              color: Color(card['color'] ?? 0xFFFFFFFF),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: Colors.blue.shade100,
+                width: isAdminMode ? 4 : 0,
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Image.file(File(data['imagePath']), fit: BoxFit.cover),
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: Container(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Text(
-                          data['label'],
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 6,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(flex: 3, child: contentWidget),
+                  Expanded(
+                    flex: 1,
+                    child: Container(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      alignment: Alignment.center,
+                      child: Text(
+                        card['label'],
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
         ),
-        if (isAdminMode) ...[
-          // DELETE BUTTON
+        if (isAdminMode)
           Positioned(
             right: 0,
             top: 0,
-            child: FloatingActionButton.small(
-              heroTag: "del_$index",
-              backgroundColor: Colors.red,
-              onPressed: () => _deleteCard(index),
-              child: const Icon(Icons.close, color: Colors.white),
+            child: IconButton(
+              icon: const Icon(Icons.cancel, color: Colors.red),
+              onPressed: () {
+                setState(() => allCards.removeAt(index));
+                _saveCards();
+              },
             ),
           ),
-          // HIDE/SHOW TOGGLE BUTTON
-          Positioned(
-            left: 0,
-            top: 0,
-            child: FloatingActionButton.small(
-              heroTag: "hide_$index",
-              backgroundColor: isVisible ? Colors.blue : Colors.grey,
-              onPressed: () => _toggleVisibility(index),
+      ],
+    );
+  }
+}
+
+class _CardEditorDialog extends StatefulWidget {
+  final String initialLabel;
+
+  const _CardEditorDialog({required this.initialLabel});
+
+  @override
+  State<_CardEditorDialog> createState() => _CardEditorDialogState();
+}
+
+class _CardEditorDialogState extends State<_CardEditorDialog> {
+  late TextEditingController _textController;
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  String? _recordedPath;
+  bool _isRecording = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _textController = TextEditingController(text: widget.initialLabel);
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      final path = await _audioRecorder.stop();
+      setState(() {
+        _isRecording = false;
+        _recordedPath = path;
+      });
+    } else {
+      if (await Permission.microphone.request().isGranted) {
+        final dir = await getApplicationDocumentsDirectory();
+        final path = '${dir.path}/${const Uuid().v4()}.m4a';
+        try {
+          await _audioRecorder.start(const RecordConfig(), path: path);
+          setState(() => _isRecording = true);
+        } catch (e) {
+          debugPrint("Rec Error: $e");
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text("Edit Card Details"),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _textController,
+            decoration: const InputDecoration(labelText: "Label"),
+            textCapitalization: TextCapitalization.sentences,
+          ),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onTap: _toggleRecording,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _isRecording
+                    ? Colors.red
+                    : (_recordedPath != null ? Colors.green : Colors.grey[300]),
+                shape: BoxShape.circle,
+              ),
               child: Icon(
-                isVisible ? Icons.visibility : Icons.visibility_off,
+                _isRecording ? Icons.stop : Icons.mic,
                 color: Colors.white,
+                size: 30,
               ),
             ),
           ),
+          if (_recordedPath != null)
+            const Padding(
+              padding: EdgeInsets.only(top: 8.0),
+              child: Text("Recording Saved!"),
+            ),
         ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel"),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            if (_textController.text.isEmpty) return;
+            Navigator.pop(context, {
+              'label': _textController.text,
+              'audioPath': _recordedPath,
+            });
+          },
+          child: const Text("Save"),
+        ),
       ],
     );
   }
 
-  Widget _buildAddButton() {
-    return GestureDetector(
-      onTap: _addNewCard,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.grey[200],
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.grey.shade400, width: 2),
-        ),
-        child: const Center(
-          child: Icon(Icons.add_a_photo, size: 50, color: Colors.grey),
-        ),
-      ),
-    );
+  @override
+  void dispose() {
+    _audioRecorder.dispose();
+    _textController.dispose();
+    super.dispose();
   }
 }

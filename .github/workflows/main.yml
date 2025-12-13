@@ -63,6 +63,9 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Create .env file
+        run: echo "GIPHY_API_KEY=${{ secrets.GIPHY_API_KEY }}" > .env
+
       # KEY STEP: Sign with Debug Key for Sideloading
       - name: Configure Signing for Sideload
         run: |

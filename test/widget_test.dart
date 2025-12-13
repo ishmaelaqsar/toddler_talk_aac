@@ -4,14 +4,19 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:toddler_talk_aac/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart'; // REQUIRED IMPORT
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUpAll(() async {
+    dotenv.loadFromString(envString: "GIPHY_API_KEY=test_key");
+  });
+
   // Helper to inject mock data into SharedPreferences
   Future<void> setMockData(List<Map<String, dynamic>> cards) async {
     SharedPreferences.setMockInitialValues({
-      'toddler_cards': json.encode(cards),
+      'toddler_cards_v5': json.encode(cards),
     });
   }
 
@@ -33,74 +38,88 @@ void main() {
           (MethodCall methodCall) async => 1,
         );
 
-    // Mock Share Plus
+    // Mock Audio Players
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-          const MethodChannel('dev.fluttercommunity.plus/share'),
+          const MethodChannel('xyz.luan/audioplayers'),
           (MethodCall methodCall) async => null,
+        );
+
+    // Mock Permissions
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('flutter.baseflow.com/permissions/methods'),
+          (MethodCall methodCall) async => {0: 1}, // 1 = granted
         );
   });
 
-  testWidgets('Core App starts safely', (WidgetTester tester) async {
+  testWidgets('Core App starts safely with defaults', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const ToddlerTalkApp());
-    expect(find.text("Hungry"), findsOneWidget); // Core word exists
-    expect(find.byIcon(Icons.add_a_photo), findsNothing); // Add button hidden
+    await tester.pumpAndSettle();
+
+    // Check for a default core word
+    expect(find.text("Hungry"), findsOneWidget);
+
+    // Ensure "Mom Mode" controls are HIDDEN by default
+    expect(find.byIcon(Icons.add_circle), findsNothing);
+    expect(find.byIcon(Icons.cancel), findsNothing);
   });
 
-  testWidgets(
-    'Hidden cards are invisible in Toddler Mode but visible in Mom Mode',
-    (WidgetTester tester) async {
-      // 1. Setup Data: One Visible card, One Hidden card
-      await setMockData([
-        {
-          "id": "1",
-          "label": "Visible Toy",
-          "imagePath": "test.jpg",
-          "isVisible": true,
-        },
-        {
-          "id": "2",
-          "label": "Hidden Toy",
-          "imagePath": "test.jpg",
-          "isVisible": false,
-        },
-      ]);
+  testWidgets('Admin Mode reveals new Giphy and Library options', (
+    WidgetTester tester,
+  ) async {
+    // 1. Setup Data
+    await setMockData([]); // Start empty
+    await tester.pumpWidget(const ToddlerTalkApp());
+    await tester.pumpAndSettle();
 
-      await tester.pumpWidget(const ToddlerTalkApp());
-      await tester.pumpAndSettle(); // Wait for data to load
+    // 2. Enter Mom Mode
+    final lockIcon = find.byIcon(Icons.lock);
+    await tester.longPress(lockIcon);
+    await tester.pumpAndSettle();
 
-      // 2. Verify Toddler Mode
-      // We scroll just in case "Visible Toy" is off-screen
-      await tester.scrollUntilVisible(
-        find.text("Visible Toy"),
-        500.0,
-        scrollable: find.byType(Scrollable),
-      );
-      expect(find.text("Visible Toy"), findsOneWidget);
+    // 3. Tap "Add Card" button
+    await tester.tap(find.byIcon(Icons.add_circle));
+    await tester.pumpAndSettle();
 
-      // "Hidden Toy" should NOT be found, even if we try to scroll to it
-      // (We can't easily scroll to something that doesn't exist, so we check existence first)
-      expect(find.text("Hidden Toy"), findsNothing);
+    // 4. VERIFY NEW MENU OPTIONS
+    // Check that our new features are visible in the dialog
+    expect(find.text("Giphy Search"), findsOneWidget);
+    expect(find.text("Symbol Library"), findsOneWidget);
+    expect(find.byIcon(Icons.gif_box), findsOneWidget);
+  });
 
-      // 3. Switch to Mom Mode
-      final lockIcon = find.byIcon(Icons.lock);
-      await tester.longPress(lockIcon);
-      await tester.pumpAndSettle(); // Allow UI to rebuild
+  testWidgets('Admin Mode toggle reveals editing tools', (
+    WidgetTester tester,
+  ) async {
+    await setMockData([
+      {
+        "id": "1",
+        "label": "Test Toy",
+        "color": 0xFFFFFFFF,
+        "type": "emoji",
+        "content": "🧸",
+        "audioPath": null,
+        "isVisible": true,
+      },
+    ]);
 
-      // 4. Verify Mom Mode (Both should show)
-      // "Hidden Toy" is likely at the bottom, so we MUST scroll to find it
-      await tester.scrollUntilVisible(
-        find.text("Hidden Toy"),
-        500.0, // Scroll down up to 500 pixels
-        scrollable: find.byType(Scrollable),
-      );
+    await tester.pumpWidget(const ToddlerTalkApp());
+    await tester.pumpAndSettle();
 
-      expect(find.text("Visible Toy"), findsOneWidget);
-      expect(find.text("Hidden Toy"), findsOneWidget);
+    // Verify Toddler Mode (Default)
+    expect(find.text("Test Toy"), findsOneWidget);
+    expect(find.byIcon(Icons.cancel), findsNothing);
 
-      // 5. Verify Visibility Toggle Button exists
-      // (This button is on the Custom Card, so finding the card finds the button)
-      expect(find.byIcon(Icons.visibility_off), findsOneWidget);
-    },
-  );
+    // Switch to Mom Mode
+    await tester.longPress(find.byIcon(Icons.lock));
+    await tester.pumpAndSettle();
+
+    // Verify Mom Mode Indicators
+    expect(find.text("Mom Mode (Edit)"), findsOneWidget);
+    expect(find.byIcon(Icons.add_circle), findsOneWidget);
+    expect(find.byIcon(Icons.cancel), findsOneWidget);
+  });
 }
