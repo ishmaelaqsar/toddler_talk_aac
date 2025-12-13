@@ -1,22 +1,25 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive_io.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle, AssetManifest;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:giphy_get/giphy_get.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:path/path.dart' as p;
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 Future<void> main() async {
   await dotenv.load(fileName: ".env");
@@ -137,6 +140,97 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // --- BACKUP & RESTORE ---
+
+  Future<void> _backupData() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final encoder = ZipFileEncoder();
+      final zipPath = '${directory.path}/toddler_talk_backup.zip';
+
+      // 1. Create a temporary JSON file for card data
+      final dataFile = File('${directory.path}/cards.json');
+      await dataFile.writeAsString(json.encode(allCards));
+
+      // 2. Create Zip
+      encoder.create(zipPath);
+      encoder.addFile(dataFile);
+
+      // 3. Add all custom images/audio found in the app directory
+      List<FileSystemEntity> files = directory.listSync();
+      for (var file in files) {
+        if (file is File) {
+          final ext = p.extension(file.path);
+          if (['.jpg', '.png', '.m4a', '.gif'].contains(ext)) {
+            encoder.addFile(file);
+          }
+        }
+      }
+      encoder.close();
+
+      // 4. Share the file
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(zipPath)], text: 'Toddler Talk Backup'),
+      );
+    } catch (e) {
+      debugPrint("Backup Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Backup Failed")));
+      }
+    }
+  }
+
+  Future<void> _restoreData() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['zip'],
+      );
+
+      if (result == null) return;
+
+      final File zipFile = File(result.files.single.path!);
+      final directory = await getApplicationDocumentsDirectory();
+
+      final bytes = await zipFile.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      for (final file in archive) {
+        final filename = file.name;
+        if (file.isFile) {
+          final data = file.content as List<int>;
+          File('${directory.path}/$filename')
+            ..createSync(recursive: true)
+            ..writeAsBytesSync(data);
+        }
+      }
+
+      final dataFile = File('${directory.path}/cards.json');
+      if (await dataFile.exists()) {
+        final String data = await dataFile.readAsString();
+        setState(() {
+          allCards = List<Map<String, dynamic>>.from(json.decode(data));
+        });
+        _saveCards();
+
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text("Restore Successful!")));
+        }
+      }
+    } catch (e) {
+      debugPrint("Restore Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Restore Failed")));
+      }
+    }
+  }
+
   // --- ACTIONS: ADD NEW CARD ---
 
   Future<void> _addNewCard() async {
@@ -172,14 +266,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (source == null) return;
-    // FIX 1: Check mounted after the async gap (showDialog)
     if (!mounted) return;
 
     String? content;
     String type = 'image';
     String initialLabel = "";
 
-    // 1. GIPHY SEARCH
     if (source == 'giphy') {
       if (giphyApiKey == "YOUR_GIPHY_API_KEY_HERE" || giphyApiKey.isEmpty) {
         if (mounted) {
@@ -194,18 +286,15 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      // We are safe to use context here because we checked !mounted above
       GiphyGif? gif = await GiphyGet.getGif(
         context: context,
         apiKey: giphyApiKey,
         tabColor: Colors.teal,
       );
 
-      // FIX 2: Simplify null check to avoid 'unnecessary bang' warnings
       final String? gifUrl = gif?.images?.original?.url;
 
       if (gifUrl != null) {
-        // Download the GIF for offline use
         final String? localPath = await _downloadFile(gifUrl);
         if (localPath == null) return;
 
@@ -215,9 +304,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         return;
       }
-    }
-    // 2. SYMBOL LIBRARY
-    else if (source == 'library') {
+    } else if (source == 'library') {
       final String? selectedPath = await _pickSymbolFromAssets();
       if (selectedPath == null) return;
 
@@ -227,11 +314,11 @@ class _HomeScreenState extends State<HomeScreen> {
           .basenameWithoutExtension(selectedPath)
           .replaceAll('_', ' ')
           .replaceAll('-', ' ');
-    }
-    // 3. CAMERA / GALLERY
-    else {
+    } else {
       if (source == 'camera') {
-        if (await Permission.camera.request().isDenied) return;
+        if (await Permission.camera.request().isDenied) {
+          return;
+        }
       }
 
       final XFile? photo = await _picker.pickImage(
@@ -250,7 +337,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    // Formatting label
     if (initialLabel.isNotEmpty && initialLabel.length > 1) {
       initialLabel = initialLabel[0].toUpperCase() + initialLabel.substring(1);
     }
@@ -396,7 +482,27 @@ class _HomeScreenState extends State<HomeScreen> {
                   )
                 : const Text("Toddler Talk"),
             actions: [
-              if (isAdminMode)
+              if (isAdminMode) ...[
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'backup') {
+                      _backupData();
+                    }
+                    if (value == 'restore') {
+                      _restoreData();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'backup',
+                      child: Text("Backup Data"),
+                    ),
+                    const PopupMenuItem(
+                      value: 'restore',
+                      child: Text("Restore Data"),
+                    ),
+                  ],
+                ),
                 IconButton(
                   icon: const Icon(
                     Icons.add_circle,
@@ -405,6 +511,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   onPressed: _addNewCard,
                 ),
+              ],
               GestureDetector(
                 onLongPress: () {
                   setState(() => isAdminMode = !isAdminMode);

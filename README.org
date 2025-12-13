@@ -17,6 +17,7 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 - **Safety Lock:** Access editing tools by **Long Pressing** the lock icon (top right).
 - **Drag & Drop:** Re-arrange cards simply by dragging them.
 - **Voice Recording:** Record your own voice (e.g., "Mommy", "Daddy") instead of using the robot voice.
+- **Backup & Restore:** Save your custom cards and recordings to a zip file to share or move to another device.
 - **Rich Media Support:**
   - **Giphy Integration:** Search and download animated GIFs.
   - **Symbol Library:** Built-in high-contrast AAC symbols.
@@ -32,9 +33,12 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
   - ~giphy_get~ & ~http~ (GIF Search & Download)
   - ~flutter_svg~ (Symbol Library)
   - ~image_picker~ (Camera/Gallery)
-- **State/Storage:**
+- **Data & Storage:**
   - ~shared_preferences~ (Card Data)
   - ~path_provider~ (File Storage)
+  - ~archive~ (Zip Compression for Backups)
+  - ~share_plus~ (Exporting Backups)
+  - ~file_picker~ (Importing Backups)
 - **Config:** ~flutter_dotenv~ (API Key Management)
 
 ** 🚀 Getting Started
@@ -70,6 +74,7 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 3. **Press and Hold** (Long Press) for 1 second until you see "Mom Mode".
 4. You will now see:
   - A "+" button to add new cards.
+  - A "Menu" (three dots) button for backups.
   - "Delete" (X) icons on custom cards.
   - You can now **Drag and Drop** cards to reorder them.
 
@@ -82,6 +87,13 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 3. **Record Audio (Optional):** Tap the Microphone icon to record 2-3 seconds of your voice (e.g., "I want a cookie").
 4. Tap **Save**.
 
+*** How to Backup & Restore Data
+1. Enter **Mom Mode** (Long press the Lock icon).
+2. Tap the **Three Dots Menu** (top right).
+3. Choose:
+   - **Backup Data:** Creates a ~.zip~ file of all your cards and recordings. You can email it to yourself or save it to Google Drive.
+   - **Restore Data:** Select a previously saved backup file to load your cards onto this device.
+
 *** ⚠️ Critical: Setting up "Kiosk Mode"
 To prevent your child from closing the app, you must enable **App Pinning** on your Android device:
 1. Go to *Settings > Security > Advanced > App Pinning*.
@@ -91,7 +103,7 @@ To prevent your child from closing the app, you must enable **App Pinning** on y
 
 ** 🧪 Testing
 
-The project includes a test suite that verifies the safety mechanisms and Giphy integration.
+The project includes a test suite that verifies the safety mechanisms, Giphy integration, and backup UI.
 #+BEGIN_SRC bash
 flutter test
 #+END_SRC
