@@ -1,40 +1,48 @@
 * Toddler Talk - AAC for Early Intervention
 
-Toddler Talk is an Android (and iOS) application designed specifically for non-verbal toddlers (ages 1-3). Unlike general AAC apps, it prioritizes **instant feedback**, **large motor targets**, and **safety** to prevent accidental edits by curious fingers.
-
+Toddler Talk is an Android (and iOS) application designed specifically for non-verbal toddlers (ages 1-3).
+Unlike general AAC apps, it prioritizes **instant feedback**, **large motor targets**, and **safety** to prevent accidental edits by curious fingers.
 It utilizes evidence-based strategies for early intervention, focusing on specific "Needs" over abstract "Core Words."
 
 ** 🌟 Features
 
 *** 👶 Toddler Mode (The Default)
-- **Instant Speak:** Tapping a picture speaks immediately. No complex "Sentence Strips" to confuse early learners.
+- **Instant Speak:** Tapping a picture speaks immediately.
 - **Large Targets:** Giant icons designed for developing motor skills.
 - **Locked UI:** No delete buttons, settings menus, or edit tools are visible to the child.
-- **Sensory Friendly:** Soft pastels (Blue/Cream) and no distracting animations.
+- **Sensory Friendly:** Soft pastels and no distracting animations.
+- **Offline Reliability:** All images and Gifs are saved locally.
 
 *** 👩‍👦 Mom Mode (Admin)
 - **Safety Lock:** Access editing tools by **Long Pressing** the lock icon (top right).
-- **Custom Photos:** Use the camera to take pictures of the child's *actual* toys and cups.
-- **Backup & Restore:** Export all custom cards and photos to a single `.zip` file. Share it to Google Drive or Email to save your work.
+- **Drag & Drop:** Re-arrange cards simply by dragging them.
+- **Voice Recording:** Record your own voice (e.g., "Mommy", "Daddy") instead of using the robot voice.
+- **Rich Media Support:**
+  - **Giphy Integration:** Search and download animated GIFs.
+  - **Symbol Library:** Built-in high-contrast AAC symbols.
+  - **Photo Gallery:** Import photos of the child's actual toys/cups.
+  - **Camera:** Take new photos directly.
 
 ** 🛠 Tech Stack
 
 - **Framework:** Flutter (Dart)
 - **Speech:** ~flutter_tts~
-- **Camera:** ~image_picker~
-- **Storage:**
+- **Audio:** ~audioplayers~ (Playback), ~record~ (Recording)
+- **Media:**
+  - ~giphy_get~ & ~http~ (GIF Search & Download)
+  - ~flutter_svg~ (Symbol Library)
+  - ~image_picker~ (Camera/Gallery)
+- **State/Storage:**
   - ~shared_preferences~ (Card Data)
-  - ~path_provider~ (Image Files)
-- **Backup System:**
-  - ~archive~ (Zip compression)
-  - ~share_plus~ (Exporting)
-  - ~file_picker~ (Importing)
+  - ~path_provider~ (File Storage)
+- **Config:** ~flutter_dotenv~ (API Key Management)
 
 ** 🚀 Getting Started
 
 *** Prerequisites
 - Flutter SDK (3.0+)
 - Android Device (Tablet recommended) or Emulator
+- A free **Giphy API Key** (from [[https://developers.giphy.com/][developers.giphy.com]])
 
 *** Installation
 
@@ -43,7 +51,13 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
    flutter pub get
    #+END_SRC
 
-2. Run on device:
+2. **Configure API Keys (Critical):**
+   Create a file named ~.env~ in the root directory and add your Giphy API Key:
+   #+BEGIN_SRC text
+   GIPHY_API_KEY=your_key_here
+   #+END_SRC
+
+3. Run on device:
    #+BEGIN_SRC bash
    flutter run
    #+END_SRC
@@ -55,15 +69,18 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 2. Find the **Lock Icon** in the top right corner.
 3. **Press and Hold** (Long Press) for 1 second until you see "Mom Mode".
 4. You will now see:
-  - A "+" button to add new photos.
-  - "Delete" icons on custom cards.
-  - A "Settings" gear for Backups.
+  - A "+" button to add new cards.
+  - "Delete" (X) icons on custom cards.
+  - You can now **Drag and Drop** cards to reorder them.
 
-*** How to Backup Data
-1. Enter **Mom Mode**.
-2. Tap the **Settings Gear**.
-3. Select **Backup Data**.
-4. Save the ~.zip~ file to your Google Drive or email it to yourself.
+*** How to Add a Custom Card
+1. Tap the **+ Button** (in Mom Mode).
+2. Choose a source:
+   - **Giphy Search:** Find an animated GIF (saves offline automatically).
+   - **Symbol Library:** Choose from built-in AAC icons.
+   - **Camera/Gallery:** Use your own photos.
+3. **Record Audio (Optional):** Tap the Microphone icon to record 2-3 seconds of your voice (e.g., "I want a cookie").
+4. Tap **Save**.
 
 *** ⚠️ Critical: Setting up "Kiosk Mode"
 To prevent your child from closing the app, you must enable **App Pinning** on your Android device:
@@ -74,8 +91,7 @@ To prevent your child from closing the app, you must enable **App Pinning** on y
 
 ** 🧪 Testing
 
-The project includes a test suite that verifies the safety mechanisms (ensuring a child cannot accidentally delete cards).
-
+The project includes a test suite that verifies the safety mechanisms and Giphy integration.
 #+BEGIN_SRC bash
 flutter test
 #+END_SRC
