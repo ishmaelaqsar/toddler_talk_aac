@@ -30,7 +30,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_launcher_icons: ^0.14.4
   flutter_tts: ^4.2.3
   flutter_svg: ^2.0.10
   image_picker: ^1.0.4
@@ -51,6 +50,10 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  # Generates the launcher icons from assets/icon.png. A build-time tool, run
+  # with `dart run flutter_launcher_icons`, so the app never imports it.
+  flutter_launcher_icons: ^0.14.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
