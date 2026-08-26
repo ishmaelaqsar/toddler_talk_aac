@@ -222,8 +222,12 @@ void backgroundAndReturn(WidgetTester tester) {
 /// A widget test runs in fake async, so a real file delete never completes
 /// inside [WidgetTester.pumpAndSettle]. This hands the run real time.
 Future<void> settleFileWork(WidgetTester tester) async {
-  await tester.runAsync(
-    () => Future<void>.delayed(const Duration(milliseconds: 100)),
-  );
-  await tester.pumpAndSettle();
+  // Several rounds, because a delete can sit behind other awaits: the app
+  // saves the board first, and each hop needs the real event loop again.
+  for (int i = 0; i < 5; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pumpAndSettle();
+  }
 }

@@ -240,7 +240,14 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
         onChangeMedia: _chooseMedia,
       ),
     );
-    if (saved == null || !mounted) return;
+    if (saved == null) {
+      // The parent backed out, so the picture they picked belongs to nothing.
+      if (media.kind == CardMediaKind.file) {
+        await _repository.deleteOwnedFile(media.content);
+      }
+      return;
+    }
+    if (!mounted) return;
 
     setState(() => _cards.add(saved));
     await _persist();
@@ -276,21 +283,69 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _deleteCard(TalkCard card) async {
-    final bool confirmed = await _confirm(
-      title: 'Delete ${card.label}?',
-      message: card.audioPath == null
-          ? 'The card goes for good. To take it off the board for now, hide it '
-                'instead.'
-          : 'The card and your recording of it go for good. To take it off the '
-                'board for now, hide it instead.',
-      action: 'Delete',
-      destructive: true,
-    );
-    if (!confirmed || !mounted) return;
+    final bool? deleteFiles = await _confirmDelete(card);
+    if (deleteFiles == null || !mounted) return;
 
     setState(() => _cards.removeWhere((c) => c.id == card.id));
     await _persist();
-    await _repository.deleteMedia(card);
+    // The parent can keep the photo or the recording even when the card goes,
+    // so a family photo is not lost with the card that used it.
+    if (deleteFiles) await _repository.deleteMedia(card);
+  }
+
+  /// Asks whether to delete [card], and whether its files go too.
+  ///
+  /// Returns null when the parent keeps the card. Otherwise it returns their
+  /// answer to the file question, which is only asked when the card owns a
+  /// file. A bundled symbol owns nothing.
+  Future<bool?> _confirmDelete(TalkCard card) {
+    final bool ownsFiles =
+        card.kind == CardMediaKind.file || card.audioPath != null;
+    bool deleteFiles = true;
+
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: Text('Delete ${card.label}?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'The card goes for good. To take it off the board for now, '
+                'hide it instead.',
+              ),
+              if (ownsFiles)
+                CheckboxListTile(
+                  value: deleteFiles,
+                  onChanged: (value) =>
+                      setLocalState(() => deleteFiles = value ?? deleteFiles),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: Text(
+                    card.audioPath == null
+                        ? 'Delete its picture from this device'
+                        : 'Delete its picture and recording from this device',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Keep'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, ownsFiles && deleteFiles),
+              style: TextButton.styleFrom(foregroundColor: AppTokens.danger),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // --- BACKUP ---

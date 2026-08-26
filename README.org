@@ -19,8 +19,8 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 - **Safety Lock:** **Press and hold** the lock icon (top right) for 1.5 seconds. A ring fills while you hold, so you can see it register.
 - **Locks Itself:** Parent mode closes after 60 seconds of no input, and whenever the app goes to the background. Tap the lock, or **Done** in the banner, to leave at once.
 - **Clear Banner:** A coloured strip states that cards can be edited, so the mode is never a surprise.
-- **Edit Any Card:** Tap a card, or its pencil, to rename it, re-record it, change its colour, or swap its picture.
-- **Hide, Don't Delete:** The eye icon takes a card off the child's board and keeps the card and its recording. Deleting asks first, and says what goes with it.
+- **Edit Any Card:** Tap a card, or its pencil, to rename it, re-record it, change its colour, or swap its picture. When a change replaces a file, you choose whether that file leaves the device.
+- **Hide, Don't Delete:** The eye icon takes a card off the child's board and keeps the card and its recording. Deleting asks first, and lets you keep the picture and recording on the device even when the card goes.
 - **Drag & Drop:** Re-arrange cards by dragging them.
 - **Voice Recording:** Record your own voice (for example, "Mummy") instead of the robot voice. Play it back before you save it.
 - **Backup & Restore:** Save your cards and recordings to a zip file to share or move to another device. A restore asks before it replaces the board.
@@ -113,7 +113,15 @@ Every colour and every metric lives in ~lib/theme.dart~. Change the palette ther
 
 *** How to Hide or Delete a Card
 - **Hide** (the eye icon) takes the card off your child's board and keeps it. Use this first.
-- **Delete** (the bin icon) removes the card and its recording for good. It asks before it does.
+- **Delete** (the bin icon) removes the card for good. It asks before it does.
+
+When you delete a card, or replace its picture or recording, the app offers to
+delete the file from the device as well. The box is ticked by default, because a
+file nothing points at is only taking up space. Untick it to keep the file, for
+example when the picture is a family photo you want to keep.
+
+The app only ever deletes a file it wrote itself. A bundled symbol, and anything
+outside the app's own storage, is left alone.
 
 *** How to Backup & Restore Data
 1. Enter **Parent Mode**.
@@ -161,5 +169,5 @@ Tests are grouped by the concern they protect, and share ~test/test_harness.dart
 | ~accessibility_test.dart~   | Screen-reader labels, and a tooltip on every icon-only control       |
 | ~layout_test.dart~          | Four viewports by three text scales, in both modes, with no overflow |
 | ~speech_test.dart~          | Speech replaces rather than queues, and recordings win over TTS      |
-| ~card_editing_test.dart~    | The editor, recordings, the add sheet, and the symbol library         |
+| ~card_editing_test.dart~    | The editor, recordings, replaced files, and the symbol library         |
 | ~card_repository_test.dart~ | Storage round trips, and backups that cannot write outside the app   |

@@ -76,15 +76,29 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
   Duration _elapsed = Duration.zero;
   Timer? _ticker;
 
-  /// Recordings this dialog created. An abandoned take is deleted on the way
-  /// out, so it does not sit on the device forever.
+  /// Files this dialog wrote: takes recorded here, and pictures picked here.
   ///
-  /// Only takes made here. The recording the card arrived with is never
-  /// deleted: the card still points at it if the parent cancels.
-  final Set<String> _takes = {};
+  /// Cancelling drops all of them. Nothing else points at them, because the
+  /// card the parent cancelled out of is unchanged.
+  final Set<String> _wroteHere = {};
 
-  /// The recording the card arrived with, if any.
-  late final String? _arrived = widget.card.audioPath;
+  /// The files the card arrived with. A bundled symbol is not one of them.
+  late final Set<String> _arrivedWith = {
+    if (widget.card.kind == CardMediaKind.file) widget.card.content,
+    ?widget.card.audioPath,
+  };
+
+  /// Whether saving should also take the replaced files off the device.
+  bool _deleteReplaced = true;
+
+  /// The files that saving would leave with nothing pointing at them.
+  Set<String> get _replaced =>
+      {..._wroteHere, ..._arrivedWith}..removeAll(_inUse);
+
+  Set<String> get _inUse => {
+    if (_draft.kind == CardMediaKind.file) _draft.content,
+    ?_draft.audioPath,
+  };
 
   @override
   void initState() {
@@ -113,7 +127,7 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
       setState(() {
         _isRecording = false;
         if (path != null) {
-          _takes.add(path);
+          _wroteHere.add(path);
           _draft = _draft.copyWith(audioPath: path);
         }
       });
@@ -171,20 +185,25 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
     final CardMediaSelection? picked = await chooser();
     if (picked == null || !mounted) return;
     setState(() {
+      // A bundled symbol is an asset key, not a file on the device.
+      if (picked.kind == CardMediaKind.file) _wroteHere.add(picked.content);
       _draft = _draft.copyWith(kind: picked.kind, content: picked.content);
     });
   }
 
-  /// Drops every take made here. The card keeps the recording it arrived with.
-  void _discardTakes() => _release(_takes);
+  /// Cancelling: undo what this dialog wrote. The card is unchanged, so it
+  /// still points at everything it arrived with.
+  void _cancel() {
+    _release(_wroteHere.difference(_arrivedWith));
+    Navigator.pop(context);
+  }
 
-  /// Drops the recordings the saved card no longer uses.
-  ///
-  /// That includes the one it arrived with, when the parent has replaced or
-  /// removed it: keeping it would leave a file on the device that nothing
-  /// points at any more.
-  void _keepOnly(String? kept) =>
-      _release({..._takes, ?_arrived}..remove(kept));
+  /// Saving: commit the card, and take the replaced files off the device if
+  /// the parent left that box ticked.
+  void _save() {
+    if (_deleteReplaced) _release(_replaced);
+    Navigator.pop(context, _draft.copyWith(label: _label.text.trim()));
+  }
 
   void _release(Iterable<String> paths) {
     for (final String path in paths) {
@@ -229,30 +248,37 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
             ),
             const SizedBox(height: AppTokens.gap),
             _recordingControls(),
+            _replacedFileChoice(),
           ],
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () {
-            _discardTakes();
-            Navigator.pop(context);
-          },
-          child: const Text('Cancel'),
-        ),
+        TextButton(onPressed: _cancel, child: const Text('Cancel')),
         ElevatedButton(
-          onPressed: _canSave
-              ? () {
-                  _keepOnly(_draft.audioPath);
-                  Navigator.pop(
-                    context,
-                    _draft.copyWith(label: _label.text.trim()),
-                  );
-                }
-              : null,
+          onPressed: _canSave ? _save : null,
           child: const Text('Save'),
         ),
       ],
+    );
+  }
+
+  /// Offered only when saving would strand a file the app owns.
+  Widget _replacedFileChoice() {
+    final int count = _replaced.length;
+    if (count == 0) return const SizedBox.shrink();
+
+    return CheckboxListTile(
+      value: _deleteReplaced,
+      onChanged: (value) =>
+          setState(() => _deleteReplaced = value ?? _deleteReplaced),
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.leading,
+      title: Text(
+        count == 1
+            ? 'Delete the file it replaces from this device'
+            : 'Delete the $count files it replaces from this device',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
     );
   }
 

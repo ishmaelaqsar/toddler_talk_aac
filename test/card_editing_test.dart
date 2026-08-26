@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:toddler_talk_aac/models/talk_card.dart';
 import 'package:toddler_talk_aac/widgets/symbol_picker.dart';
 
 import 'test_harness.dart';
@@ -357,6 +358,222 @@ void main() {
 
       expect(fresh.existsSync(), isTrue);
       expect(recording.existsSync(), isFalse);
+    });
+  });
+
+  group('replacing a picture', () {
+    /// A card whose picture is a file the app owns.
+    Future<File> pumpCardWithPhoto(WidgetTester tester) async {
+      installMocks();
+      final File photo = File('${appDocuments.path}/face.jpg')
+        ..writeAsBytesSync(const [9]);
+      installMocks(
+        storedCards: [storedCard(id: 'a', label: 'Cup', content: photo.path)],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+      return photo;
+    }
+
+    /// Swaps the picture for a bundled symbol, which owns no file.
+    Future<void> pickSymbol(WidgetTester tester) async {
+      await tester.tap(find.text('Change picture'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Symbol Library'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'bathe');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bathe'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('saving deletes the old picture by default', (tester) async {
+      final File photo = await pumpCardWithPhoto(tester);
+      await pickSymbol(tester);
+
+      expect(
+        find.text('Delete the file it replaces from this device'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      await settleFileWork(tester);
+
+      expect(photo.existsSync(), isFalse);
+    });
+
+    testWidgets('unticking the box keeps the old picture', (tester) async {
+      final File photo = await pumpCardWithPhoto(tester);
+      await pickSymbol(tester);
+
+      await tester.tap(
+        find.text('Delete the file it replaces from this device'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      await settleFileWork(tester);
+
+      expect(photo.existsSync(), isTrue);
+    });
+
+    testWidgets('cancelling keeps the old picture', (tester) async {
+      final File photo = await pumpCardWithPhoto(tester);
+      await pickSymbol(tester);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await settleFileWork(tester);
+
+      expect(photo.existsSync(), isTrue);
+    });
+
+    testWidgets('the box is not offered when nothing is replaced', (
+      tester,
+    ) async {
+      installMocks(
+        storedCards: [
+          storedCard(
+            id: 'a',
+            label: 'Cup',
+            kind: CardMediaKind.asset,
+            content: 'assets/symbols/water.svg',
+          ),
+        ],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Milk');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CheckboxListTile), findsNothing);
+    });
+
+    testWidgets('both replaced files are counted together', (tester) async {
+      installMocks();
+      final File photo = File('${appDocuments.path}/face.jpg')
+        ..writeAsBytesSync(const [9]);
+      final File voice = File('${appDocuments.path}/mummy.m4a')
+        ..writeAsBytesSync(const [9]);
+      installMocks(
+        storedCards: [
+          storedCard(
+            id: 'a',
+            label: 'Cup',
+            content: photo.path,
+            audioPath: voice.path,
+          ),
+        ],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+
+      await pickSymbol(tester);
+      await tester.tap(find.byTooltip('Remove the recording'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Delete the 2 files it replaces from this device'),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('deleting a card', () {
+    Future<File> pumpCardWithPhoto(WidgetTester tester) async {
+      installMocks();
+      final File photo = File('${appDocuments.path}/face.jpg')
+        ..writeAsBytesSync(const [9]);
+      installMocks(
+        storedCards: [storedCard(id: 'a', label: 'Cup', content: photo.path)],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Delete Cup'));
+      await tester.pumpAndSettle();
+      return photo;
+    }
+
+    testWidgets('its picture goes with it by default', (tester) async {
+      final File photo = await pumpCardWithPhoto(tester);
+
+      expect(find.text('Delete its picture from this device'), findsOneWidget);
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      await settleFileWork(tester);
+
+      expect(await savedOrder(), isEmpty);
+      expect(photo.existsSync(), isFalse);
+    });
+
+    testWidgets('unticking the box keeps the picture on the device', (
+      tester,
+    ) async {
+      final File photo = await pumpCardWithPhoto(tester);
+
+      // A family photo can outlive the card that used it.
+      await tester.tap(find.text('Delete its picture from this device'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      await settleFileWork(tester);
+
+      expect(await savedOrder(), isEmpty);
+      expect(photo.existsSync(), isTrue);
+    });
+
+    testWidgets('a recording is named alongside the picture', (tester) async {
+      installMocks();
+      installMocks(
+        storedCards: [
+          storedCard(
+            id: 'a',
+            label: 'Cup',
+            content: '${appDocuments.path}/face.jpg',
+            audioPath: '${appDocuments.path}/mummy.m4a',
+          ),
+        ],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Delete Cup'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Delete its picture and recording from this device'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a bundled symbol is offered no box, having no file', (
+      tester,
+    ) async {
+      installMocks(
+        storedCards: [
+          storedCard(
+            id: 'a',
+            label: 'Cup',
+            kind: CardMediaKind.asset,
+            content: 'assets/symbols/water.svg',
+          ),
+        ],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Delete Cup'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CheckboxListTile), findsNothing);
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(await savedOrder(), isEmpty);
     });
   });
 }
