@@ -7,21 +7,27 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 ** 🌟 Features
 
 *** 👶 Toddler Mode (The Default)
-- **Instant Speak:** Tapping a picture speaks immediately.
-- **Large Targets:** Giant icons designed for developing motor skills.
-- **Locked UI:** No delete buttons, settings menus, or edit tools are visible to the child.
+- **Instant Speak:** Tapping a picture speaks immediately. A new tap replaces the sound, so fast taps never queue up.
+- **Large Targets:** Cards keep about the same generous size on a phone and on a tablet, in either orientation.
+- **Locked UI:** No delete buttons, no settings, no edit tools, and no drag to rearrange. A toddler cannot change the board.
+- **Screen Reader Ready:** Every card announces its word as a button, and every icon-only control carries a label.
+- **Readable at any text size:** The board holds its layout up to a 2x system text scale.
 - **Sensory Friendly:** Soft pastels and no distracting animations.
-- **Offline Reliability:** All images and Gifs are saved locally.
+- **Offline Reliability:** All images and GIFs are saved locally.
 
-*** 👩‍👦 Mom Mode (Admin)
-- **Safety Lock:** Access editing tools by **Long Pressing** the lock icon (top right).
-- **Drag & Drop:** Re-arrange cards simply by dragging them.
-- **Voice Recording:** Record your own voice (e.g., "Mommy", "Daddy") instead of using the robot voice.
-- **Backup & Restore:** Save your custom cards and recordings to a zip file to share or move to another device.
+*** 👩‍👦 Parent Mode (Admin)
+- **Safety Lock:** **Press and hold** the lock icon (top right) for 1.5 seconds. A ring fills while you hold, so you can see it register.
+- **Locks Itself:** Parent mode closes after 60 seconds of no input, and whenever the app goes to the background. Tap the lock, or **Done** in the banner, to leave at once.
+- **Clear Banner:** A coloured strip states that cards can be edited, so the mode is never a surprise.
+- **Edit Any Card:** Tap a card, or its pencil, to rename it, re-record it, change its colour, or swap its picture.
+- **Hide, Don't Delete:** The eye icon takes a card off the child's board and keeps the card and its recording. Deleting asks first, and says what goes with it.
+- **Drag & Drop:** Re-arrange cards by dragging them.
+- **Voice Recording:** Record your own voice (for example, "Mummy") instead of the robot voice. Play it back before you save it.
+- **Backup & Restore:** Save your cards and recordings to a zip file to share or move to another device. A restore asks before it replaces the board.
 - **Rich Media Support:**
-  - **Giphy Integration:** Search and download animated GIFs.
-  - **Symbol Library:** Built-in high-contrast AAC symbols.
-  - **Photo Gallery:** Import photos of the child's actual toys/cups.
+  - **Giphy Integration:** Search and download animated GIFs. Offered only when a Giphy key is built in.
+  - **Symbol Library:** 450+ built-in AAC symbols, searchable by name.
+  - **Photo Gallery:** Import photos of the child's actual toys or cups.
   - **Camera:** Take new photos directly.
 
 ** 🛠 Tech Stack
@@ -39,14 +45,28 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
   - ~archive~ (Zip Compression for Backups)
   - ~share_plus~ (Exporting Backups)
   - ~file_picker~ (Importing Backups)
-- **Config:** ~flutter_dotenv~ (API Key Management)
+
+** 🗂 Project Layout
+
+#+BEGIN_SRC text
+lib/
+  main.dart                     app entry and the Giphy key
+  theme.dart                    every colour and metric token
+  models/talk_card.dart         one card, and its JSON shape
+  data/card_repository.dart     load, save, backup, restore, media files
+  services/speech_service.dart  text-to-speech and recording playback
+  screens/board_screen.dart     the board, parent mode, and the auto-lock
+  widgets/                      cards, the lock, and the parent-facing sheets
+#+END_SRC
+
+Every colour and every metric lives in ~lib/theme.dart~. Change the palette there, not in a widget.
 
 ** 🚀 Getting Started
 
 *** Prerequisites
-- Flutter SDK (3.0+)
+- Flutter SDK (3.10+), or Docker for the containerised checks
 - Android Device (Tablet recommended) or Emulator
-- A free **Giphy API Key** (from [[https://developers.giphy.com/][developers.giphy.com]])
+- Optional: a free **Giphy API Key** (from [[https://developers.giphy.com/][developers.giphy.com]]). Without one, every source except the GIF search still works.
 
 *** Installation
 
@@ -55,44 +75,54 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
    flutter pub get
    #+END_SRC
 
-2. **Configure API Keys (Critical):**
-   Create a file named ~.env~ in the root directory and add your Giphy API Key:
-   #+BEGIN_SRC text
-   GIPHY_API_KEY=your_key_here
-   #+END_SRC
-
-3. Run on device:
+2. Run on device:
    #+BEGIN_SRC bash
    flutter run
    #+END_SRC
+
+3. To enable the GIF search, pass your key at build time:
+   #+BEGIN_SRC bash
+   flutter run --dart-define=GIPHY_API_KEY=your_key_here
+   #+END_SRC
+   The key is compiled in, so an installed APK carries it. Release builds read the
+   ~GIPHY_API_KEY~ repository secret in CI.
 
 ** 📖 Parent Guide
 
 *** How to Edit Cards
 1. Open the app.
 2. Find the **Lock Icon** in the top right corner.
-3. **Press and Hold** (Long Press) for 1 second until you see "Mom Mode".
-4. You will now see:
+3. **Press and hold** it for about 1.5 seconds. A ring fills as you hold. Release when parent mode opens.
+4. You now see:
   - A "+" button to add new cards.
   - A "Menu" (three dots) button for backups.
-  - "Delete" (X) icons on custom cards.
-  - You can now **Drag and Drop** cards to reorder them.
+  - A pencil, an eye, and a delete icon on every card.
+  - You can now **drag and drop** cards to reorder them.
+5. Tap the lock again, or **Done** in the banner, when you finish. Parent mode also closes on its own after a minute.
 
 *** How to Add a Custom Card
-1. Tap the **+ Button** (in Mom Mode).
+1. Tap the **+ Button** (in Parent Mode).
 2. Choose a source:
    - **Giphy Search:** Find an animated GIF (saves offline automatically).
-   - **Symbol Library:** Choose from built-in AAC icons.
+   - **Symbol Library:** Search the built-in AAC icons by name.
    - **Camera/Gallery:** Use your own photos.
-3. **Record Audio (Optional):** Tap the Microphone icon to record 2-3 seconds of your voice (e.g., "I want a cookie").
-4. Tap **Save**.
+3. Check the picture in the preview. Use **Change picture** to pick a different one.
+4. Type what the card says, and pick a colour.
+5. **Record Audio (Optional):** Tap the microphone to record 2-3 seconds of your voice, then play it back.
+6. Tap **Save**.
+
+*** How to Hide or Delete a Card
+- **Hide** (the eye icon) takes the card off your child's board and keeps it. Use this first.
+- **Delete** (the bin icon) removes the card and its recording for good. It asks before it does.
 
 *** How to Backup & Restore Data
-1. Enter **Mom Mode** (Long press the Lock icon).
+1. Enter **Parent Mode**.
 2. Tap the **Three Dots Menu** (top right).
 3. Choose:
-   - **Backup Data:** Creates a ~.zip~ file of all your cards and recordings. You can email it to yourself or save it to Google Drive.
-   - **Restore Data:** Select a previously saved backup file to load your cards onto this device.
+   - **Backup Data:** Creates a ~.zip~ file of your cards and recordings. You can email it to yourself or save it to Google Drive.
+   - **Restore Data:** Select a saved backup to load its cards onto this device. This replaces every card on the device, so it asks first.
+
+Pictures and recordings are re-pointed at this device on restore, so a backup made on one tablet works on another.
 
 *** ⚠️ Critical: Setting up "Kiosk Mode"
 To prevent your child from closing the app, you must enable **App Pinning** on your Android device:
@@ -101,9 +131,35 @@ To prevent your child from closing the app, you must enable **App Pinning** on y
 3. Open Toddler Talk.
 4. Swipe up to see recent apps, tap the app icon, and select *Pin*.
 
-** 🧪 Testing
+** 🧪 Development
 
-The project includes a test suite that verifies the safety mechanisms, Giphy integration, and backup UI.
+*** Running the checks in Docker
+The host needs no Flutter SDK. ~tool/verify.sh~ runs the same steps as CI inside a container, and keeps the pub cache in a named volume so repeat runs are fast.
+
 #+BEGIN_SRC bash
+tool/verify.sh          # pub get, format check, analyze, test
+tool/verify.sh format   # rewrite files with dart format
+tool/verify.sh shell    # interactive shell in the container
+#+END_SRC
+
+Override the image with ~FLUTTER_IMAGE~ if you need a pinned Flutter version.
+
+*** Running the checks directly
+
+#+BEGIN_SRC bash
+dart format --output=none --set-exit-if-changed .
+flutter analyze
 flutter test
 #+END_SRC
+
+*** What the test suite covers
+Tests are grouped by the concern they protect, and share ~test/test_harness.dart~ for plugin mocks and viewport control.
+
+| File                        | Protects                                                            |
+|-----------------------------+---------------------------------------------------------------------|
+| ~safety_test.dart~          | A toddler cannot reorder, delete, or reach any edit control          |
+| ~accessibility_test.dart~   | Screen-reader labels, and a tooltip on every icon-only control       |
+| ~layout_test.dart~          | Four viewports by three text scales, in both modes, with no overflow |
+| ~speech_test.dart~          | Speech replaces rather than queues, and recordings win over TTS      |
+| ~card_editing_test.dart~    | The editor, recordings, the add sheet, and the symbol library         |
+| ~card_repository_test.dart~ | Storage round trips, and backups that cannot write outside the app   |

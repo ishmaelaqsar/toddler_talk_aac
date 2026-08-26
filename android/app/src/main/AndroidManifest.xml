@@ -30,7 +30,7 @@
   <application
     android:name="${applicationName}"
     android:icon="@mipmap/launcher_icon"
-    android:label="toddler_talk_aac">
+    android:label="Toddler Talk">
     <activity
       android:name=".MainActivity"
       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
