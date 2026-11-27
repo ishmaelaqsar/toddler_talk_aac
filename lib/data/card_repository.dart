@@ -348,9 +348,9 @@ class CardRepository {
     final Directory dir = await getApplicationDocumentsDirectory();
     final Map<String, String> documents = await _unpack(zip.path, dir.path);
 
-    final List<TalkCard> cards = decode(
-      documents[_manifestName]!,
-    ).map((c) => _rehomeMedia(c, dir.path)).toList();
+    final List<TalkCard> cards = decode(documents[_manifestName]!)
+        .map((c) => _rehomeMedia(c, dir.path))
+        .toList();
     final List<BoardPage> pages = _readPages(documents[_pagesName]);
     final BoardSettings? settings = _readSettings(documents[_settingsName]);
     await save(cards);

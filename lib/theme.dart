@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Colour and metric tokens for the whole app.
 ///
@@ -68,6 +68,9 @@ abstract final class AppTokens {
   static const double minTouchTarget = 48.0;
 
   static const double editableBorderWidth = 3.0;
+
+  /// The lift of a card while a parent drags it.
+  static const double dragElevation = 3.0;
 
   /// Wider than [editableBorderWidth], so the ring reads at a glance. It does
   /// not move, so it does not pull the eye away from the picture.

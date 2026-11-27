@@ -39,6 +39,7 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 ** 🛠 Tech Stack
 
 - **Framework:** Flutter (Dart)
+- **Widgets:** ~material_ui~ (Material Design, a package apart from the Flutter SDK)
 - **Speech:** ~flutter_tts~
 - **Audio:** ~audioplayers~ (Playback), ~record~ (Recording)
 - **Media:**
@@ -77,7 +78,7 @@ Every colour and every metric lives in ~lib/theme.dart~. Change the palette ther
 ** 🚀 Getting Started
 
 *** Prerequisites
-- Flutter SDK (3.10+), or Docker for the containerised checks
+- Flutter SDK (3.47+), or Docker for the containerised checks
 - Android Device (Tablet recommended) or Emulator
 - Optional: a free **Giphy API Key** (from [[https://developers.giphy.com/][developers.giphy.com]]). Without one, every source except the GIF search still works.
 
@@ -187,6 +188,16 @@ tool/verify.sh shell    # interactive shell in the container
 
 Override the image with ~FLUTTER_IMAGE~ if you need a pinned Flutter version.
 
+When the image carries a Flutter older than the one in Prerequisites, clone a
+Flutter release on the host and set ~FLUTTER_SDK~ to it. The checkout replaces
+the image's own SDK. Keep it in a folder that Docker can mount, for example
+under your home folder.
+
+#+BEGIN_SRC bash
+git clone --branch <version> https://github.com/flutter/flutter.git <dir>
+FLUTTER_SDK=<dir> tool/verify.sh
+#+END_SRC
+
 *** Running the checks directly
 
 #+BEGIN_SRC bash
@@ -205,6 +216,7 @@ Tests are grouped by the concern they protect, and share ~test/test_harness.dart
 | ~layout_test.dart~          | Four viewports by three text scales, in both modes, with pages, the sheets, and the gate       |
 | ~speech_test.dart~          | Speech replaces rather than queues, recordings win over TTS, and the speaking ring             |
 | ~highlight_test.dart~       | The speaking ring clears when a recording ends                                                 |
+| ~bridge_test.dart~          | Widgets of ~package:flutter/material.dart~ get the app theme and localisations                 |
 | ~settings_test.dart~        | The voice, the speed, and the card size, and that they survive a restart                       |
 | ~pages_test.dart~           | Tabs, the Pages sheet, a page delete that keeps its cards, and a reorder per page              |
 | ~card_editing_test.dart~    | The editor, speech text, recordings and their limit, replaced files, and the symbol library    |

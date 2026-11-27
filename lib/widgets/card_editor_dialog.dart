@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
@@ -240,9 +240,9 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
     }
   }
 
-  void _tell(String message) => ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(message)));
+  void _tell(String message) =>
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
 
   @override
   Widget build(BuildContext context) {

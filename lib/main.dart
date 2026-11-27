@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'screens/board_screen.dart';
 import 'theme.dart';
@@ -27,6 +27,12 @@ class ToddlerTalkApp extends StatelessWidget {
       title: 'Toddler Talk',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.build(),
+      // giphy_get and reorderable_grid_view import package:flutter/material.dart,
+      // so their widgets read the theme and the localisations of that library.
+      // The bridge gives them this app's theme. material_ui marks the bridge as
+      // deprecated because it is a temporary aid.
+      // ignore: deprecated_member_use
+      builder: (context, child) => MaterialUiCompatibilityBridge(child: child!),
       home: BoardScreen(giphyApiKey: giphyApiKey),
     );
   }

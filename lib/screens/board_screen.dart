@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:giphy_get/giphy_get.dart';
 import 'package:image_picker/image_picker.dart';
@@ -640,9 +640,9 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _tell(String message) => ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(message)));
+  void _tell(String message) =>
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
 
   // --- UI ---
 
@@ -800,6 +800,13 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
       padding: padding,
       gridDelegate: delegate,
       itemCount: shown.length,
+      // The package wraps a dragged card in a Material of
+      // package:flutter/material.dart, and the card's material_ui ink buttons
+      // do not count it. This is the same wrap, from material_ui.
+      dragWidgetBuilderV2: DragWidgetBuilderV2(
+        builder: (index, child, screenshot) =>
+            Material(elevation: AppTokens.dragElevation, child: child),
+      ),
       onReorder: (oldIndex, newIndex) {
         setState(
           () => _cards = reorderWithinPage(

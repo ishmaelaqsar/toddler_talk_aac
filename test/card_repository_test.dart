@@ -324,9 +324,8 @@ void main() {
         'mummy.m4a': const [2],
       });
 
-      final List<TalkCard> restored = (await repository.importBackup(
-        zip,
-      )).cards;
+      final List<TalkCard> restored = (await repository.importBackup(zip))
+          .cards;
 
       expect(restored.single.content, p.join(documents.path, 'face.jpg'));
       expect(restored.single.audioPath, p.join(documents.path, 'mummy.m4a'));
@@ -345,9 +344,8 @@ void main() {
         'cards.json': asJson([card]),
       });
 
-      final List<TalkCard> restored = (await repository.importBackup(
-        zip,
-      )).cards;
+      final List<TalkCard> restored = (await repository.importBackup(zip))
+          .cards;
 
       expect(restored.single.content, 'assets/symbols/water.svg');
     });
@@ -438,9 +436,9 @@ void main() {
       await repository.exportBackup(const []);
 
       expect(
-        Directory(
-          p.dirname(await repository.exportBackup(const [])),
-        ).listSync().map((e) => p.basename(e.path)),
+        Directory(p.dirname(await repository.exportBackup(const [])))
+            .listSync()
+            .map((e) => p.basename(e.path)),
         isNot(contains('cards.json')),
       );
     });
