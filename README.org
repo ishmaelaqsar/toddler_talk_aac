@@ -188,7 +188,10 @@ tool/verify.sh shell    # interactive shell in the container
 
 Override the image with ~FLUTTER_IMAGE~ if you need a pinned Flutter version.
 
-When the image carries a Flutter older than the one in Prerequisites, clone a
+CI pins its Flutter version in ~.github/workflows/main.yml~. Run the checks on
+that version before you push, so a local pass means a CI pass.
+
+When the image carries a different Flutter, clone that
 Flutter release on the host and set ~FLUTTER_SDK~ to it. The checkout replaces
 the image's own SDK. Keep it in a folder that Docker can mount, for example
 under your home folder.
