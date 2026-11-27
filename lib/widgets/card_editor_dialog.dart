@@ -6,9 +6,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 import '../data/card_repository.dart';
+import '../models/board_page.dart';
 import '../models/talk_card.dart';
 import '../theme.dart';
 import 'card_media.dart';
+import 'choices.dart';
 
 /// A picture the parent chose for a card.
 class CardMediaSelection {
@@ -33,10 +35,16 @@ typedef MediaChooser = Future<CardMediaSelection?> Function();
 ///
 /// The same dialog creates a card and edits one, so renaming, re-recording, or
 /// swapping a picture no longer needs delete-and-add.
+///
+/// [onHear] speaks the words the card says, so a parent can check them before
+/// they save. With more than one of [pages], the parent can move the card to
+/// another page.
 Future<TalkCard?> showCardEditor(
   BuildContext context, {
   required TalkCard card,
   required CardRepository repository,
+  required ValueChanged<String> onHear,
+  required List<BoardPage> pages,
   MediaChooser? onChangeMedia,
 }) => showDialog<TalkCard>(
   context: context,
@@ -44,6 +52,8 @@ Future<TalkCard?> showCardEditor(
   builder: (context) => _CardEditorDialog(
     card: card,
     repository: repository,
+    onHear: onHear,
+    pages: pages,
     onChangeMedia: onChangeMedia,
   ),
 );
@@ -52,11 +62,15 @@ class _CardEditorDialog extends StatefulWidget {
   const _CardEditorDialog({
     required this.card,
     required this.repository,
+    required this.onHear,
+    required this.pages,
     this.onChangeMedia,
   });
 
   final TalkCard card;
   final CardRepository repository;
+  final ValueChanged<String> onHear;
+  final List<BoardPage> pages;
   final MediaChooser? onChangeMedia;
 
   @override
@@ -68,6 +82,9 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
   final AudioPlayer _player = AudioPlayer();
   late final TextEditingController _label = TextEditingController(
     text: widget.card.label,
+  );
+  late final TextEditingController _speech = TextEditingController(
+    text: widget.card.speech,
   );
 
   late TalkCard _draft = widget.card;
@@ -114,6 +131,7 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
     _recorder.dispose();
     _player.dispose();
     _label.dispose();
+    _speech.dispose();
     super.dispose();
   }
 
@@ -121,8 +139,10 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
 
   Future<void> _toggleRecording() async {
     if (_isRecording) {
-      final String? path = await _recorder.stop();
+      // Before the await, so the ticker cannot stop the recorder a second
+      // time.
       _ticker?.cancel();
+      final String? path = await _recorder.stop();
       if (!mounted) return;
       setState(() {
         _isRecording = false;
@@ -152,9 +172,9 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
       _elapsed = Duration.zero;
     });
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() => _elapsed += const Duration(seconds: 1));
-      }
+      if (!mounted) return;
+      setState(() => _elapsed += const Duration(seconds: 1));
+      if (_elapsed >= AppTokens.recordingLimit) _toggleRecording();
     });
   }
 
@@ -202,7 +222,15 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
   /// the parent left that box ticked.
   void _save() {
     if (_deleteReplaced) _release(_replaced);
-    Navigator.pop(context, _draft.copyWith(label: _label.text.trim()));
+    Navigator.pop(
+      context,
+      _draft.copyWith(label: _label.text.trim(), speech: _speech.text.trim()),
+    );
+  }
+
+  void _hear() {
+    final String speech = _speech.text.trim();
+    widget.onHear(speech.isEmpty ? _label.text.trim() : speech);
   }
 
   void _release(Iterable<String> paths) {
@@ -231,7 +259,9 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
             const SizedBox(height: AppTokens.gap),
             TextField(
               controller: _label,
-              autofocus: true,
+              // The keyboard covers much of the dialog, so it rises only when
+              // the card needs a word.
+              autofocus: widget.card.label.isEmpty,
               textCapitalization: TextCapitalization.sentences,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
@@ -241,12 +271,45 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
               ),
             ),
             const SizedBox(height: AppTokens.gap),
+            TextField(
+              controller: _speech,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'What it says (optional)',
+                border: OutlineInputBorder(),
+                // A widget, not helperText, so the hint wraps instead of
+                // ending in an ellipsis at a large text scale.
+                helper: Text(
+                  'Leave it empty to say the word on the card. A recording, '
+                  'when there is one, plays in place of this text.',
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _hear,
+                icon: const Icon(Icons.volume_up_outlined),
+                label: const Text('Hear it'),
+              ),
+            ),
+            const SizedBox(height: AppTokens.gap),
             _ColourChooser(
               selected: _draft.colorValue,
               onSelected: (value) =>
                   setState(() => _draft = _draft.copyWith(colorValue: value)),
             ),
             const SizedBox(height: AppTokens.gap),
+            if (widget.pages.length > 1)
+              Choices<String>(
+                title: 'Page',
+                names: {
+                  for (final BoardPage page in widget.pages) page.id: page.name,
+                },
+                selected: pageIdOf(_draft, widget.pages),
+                onSelected: (id) =>
+                    setState(() => _draft = _draft.copyWith(pageId: id)),
+              ),
             _recordingControls(),
             _replacedFileChoice(),
           ],
@@ -343,7 +406,7 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
             if (_isRecording) ...[
               const SizedBox(width: 12),
               Text(
-                _format(_elapsed),
+                '${_format(_elapsed)} / ${_format(AppTokens.recordingLimit)}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ],

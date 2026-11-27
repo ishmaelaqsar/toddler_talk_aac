@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -20,6 +21,7 @@ class CardTile extends StatefulWidget {
     required this.onEdit,
     required this.onToggleVisible,
     required this.onDelete,
+    required this.speaking,
   });
 
   final TalkCard card;
@@ -33,12 +35,46 @@ class CardTile extends StatefulWidget {
   final VoidCallback onToggleVisible;
   final VoidCallback onDelete;
 
+  /// The id of the card whose sound plays. This card wears a ring while the id
+  /// is its own.
+  final ValueListenable<String?> speaking;
+
   @override
   State<CardTile> createState() => _CardTileState();
 }
 
 class _CardTileState extends State<CardTile> {
   bool _pressed = false;
+  late bool _speaking = _isSpeaking();
+
+  bool _isSpeaking() => widget.speaking.value == widget.card.id;
+
+  /// Rebuilds only when this card's own state flips, so a tap repaints two
+  /// cards at most, not the board.
+  void _onSpeaking() {
+    final bool speaking = _isSpeaking();
+    if (speaking != _speaking) setState(() => _speaking = speaking);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.speaking.addListener(_onSpeaking);
+  }
+
+  @override
+  void didUpdateWidget(CardTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.speaking == widget.speaking) return;
+    oldWidget.speaking.removeListener(_onSpeaking);
+    widget.speaking.addListener(_onSpeaking);
+  }
+
+  @override
+  void dispose() {
+    widget.speaking.removeListener(_onSpeaking);
+    super.dispose();
+  }
 
   void _setPressed(bool value) {
     if (_pressed == value) return;
@@ -81,9 +117,6 @@ class _CardTileState extends State<CardTile> {
             decoration: BoxDecoration(
               color: Color(card.colorValue),
               borderRadius: BorderRadius.circular(AppTokens.cardRadius),
-              border: widget.parentMode
-                  ? Border.all(color: AppTokens.editableBorder, width: 3)
-                  : null,
               boxShadow: const [
                 BoxShadow(
                   color: AppTokens.cardShadow,
@@ -92,17 +125,42 @@ class _CardTileState extends State<CardTile> {
                 ),
               ],
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppTokens.cardRadius),
-              child: LayoutBuilder(
-                builder: (context, constraints) =>
-                    _body(context, constraints.maxHeight, dimmed: dimmed),
+            // In front, because a photo and the label band cover a border
+            // drawn behind them.
+            child: DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppTokens.cardRadius),
+                border: _border(),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(AppTokens.cardRadius),
+                child: LayoutBuilder(
+                  builder: (context, constraints) =>
+                      _body(context, constraints.maxHeight, dimmed: dimmed),
+                ),
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  BoxBorder? _border() {
+    if (_speaking) {
+      return Border.all(
+        color: AppTokens.speakingRing,
+        width: AppTokens.speakingRingWidth,
+      );
+    }
+    if (widget.parentMode) {
+      return Border.all(
+        color: AppTokens.editableBorder,
+        width: AppTokens.editableBorderWidth,
+      );
+    }
+    return null;
   }
 
   Widget _body(
@@ -130,8 +188,19 @@ class _CardTileState extends State<CardTile> {
           child: Opacity(
             opacity: dimmed ? 0.4 : 1.0,
             child: Column(
+              // A photo sizes itself to its own shape in a loose width, so a
+              // square or portrait photo would leave the card fill at its
+              // sides.
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: CardMedia(card: widget.card)),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => CardMedia(
+                      card: widget.card,
+                      drawnExtent: constraints.biggest.longestSide,
+                    ),
+                  ),
+                ),
                 SizedBox(height: bandHeight, child: _label(context)),
               ],
             ),

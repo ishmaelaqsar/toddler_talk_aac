@@ -15,7 +15,8 @@ enum CardMediaKind {
 /// One card on the board.
 ///
 /// Records already on a device use the `toddler_cards_v5` shape, so
-/// [TalkCard.fromJson] reads that shape and [toJson] writes it back unchanged.
+/// [TalkCard.fromJson] reads that shape and [toJson] writes it back. A new
+/// field only adds a key, so an older build can read a newer record.
 class TalkCard {
   const TalkCard({
     required this.id,
@@ -23,6 +24,8 @@ class TalkCard {
     required this.kind,
     required this.content,
     this.audioPath,
+    this.speech,
+    this.pageId,
     this.colorValue = CardPalette.fallback,
     this.isVisible = true,
   });
@@ -36,6 +39,21 @@ class TalkCard {
 
   /// A parent's own recording. Played instead of text-to-speech when present.
   final String? audioPath;
+
+  /// What the voice says in place of the label, for example "I want milk,
+  /// please" on a card labelled "Milk". A screen reader reads the label, not
+  /// this text.
+  final String? speech;
+
+  /// The speech text when it has words, else the label.
+  String get spokenText {
+    final String? text = speech;
+    return text == null || text.trim().isEmpty ? label : text;
+  }
+
+  /// The page the card sits on. A missing or unknown page means the first
+  /// page.
+  final String? pageId;
 
   final int colorValue;
 
@@ -55,6 +73,8 @@ class TalkCard {
     kind: _kindNames[json['type']] ?? CardMediaKind.emoji,
     content: json['content'] as String? ?? '',
     audioPath: json['audioPath'] as String?,
+    speech: json['speech'] as String?,
+    pageId: json['page'] as String?,
     // An older record may carry neither a colour nor a visibility flag.
     colorValue: json['color'] as int? ?? CardPalette.fallback,
     isVisible: json['isVisible'] as bool? ?? true,
@@ -66,16 +86,21 @@ class TalkCard {
     'type': _kindNames.entries.firstWhere((e) => e.value == kind).key,
     'content': content,
     'audioPath': audioPath,
+    'speech': speech,
+    'page': pageId,
     'color': colorValue,
     'isVisible': isVisible,
   };
 
+  /// An empty [speech] clears the speech text, so no separate flag is needed.
   TalkCard copyWith({
     String? label,
     CardMediaKind? kind,
     String? content,
     String? audioPath,
     bool clearAudio = false,
+    String? speech,
+    String? pageId,
     int? colorValue,
     bool? isVisible,
   }) => TalkCard(
@@ -84,6 +109,8 @@ class TalkCard {
     kind: kind ?? this.kind,
     content: content ?? this.content,
     audioPath: clearAudio ? null : (audioPath ?? this.audioPath),
+    speech: speech == null ? this.speech : (speech.isEmpty ? null : speech),
+    pageId: pageId ?? this.pageId,
     colorValue: colorValue ?? this.colorValue,
     isVisible: isVisible ?? this.isVisible,
   );

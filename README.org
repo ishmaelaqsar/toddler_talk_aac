@@ -10,20 +10,26 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
 - **Instant Speak:** Tapping a picture speaks immediately. A new tap replaces the sound, so fast taps never queue up.
 - **Large Targets:** Cards keep about the same generous size on a phone and on a tablet, in either orientation.
 - **Locked UI:** No delete buttons, no settings, no edit tools, and no drag to rearrange. A toddler cannot change the board.
+- **Stays Put:** The system bars stay hidden and the Back button does nothing, so a stray swipe does not leave the board. The screen stays on while the app is open.
+- **Speaking Ring:** The card that speaks wears a dark ring until its sound ends. The ring does not move.
+- **Pages:** Cards sit on pages, each with a large tab. A child sees a tab only for a page with a card to tap, and hears the page name on a tap.
+- **Starter Board:** A first run opens with 12 cards for everyday needs, such as Hungry, Milk, Nappy, and Sleepy.
 - **Screen Reader Ready:** Every card announces its word as a button, and every icon-only control carries a label.
 - **Readable at any text size:** The board holds its layout up to a 2x system text scale.
 - **Sensory Friendly:** Soft pastels and no distracting animations.
 - **Offline Reliability:** All images and GIFs are saved locally.
 
 *** 👩‍👦 Parent Mode (Admin)
-- **Safety Lock:** **Press and hold** the lock icon (top right) for 1.5 seconds. A ring fills while you hold, so you can see it register.
+- **Safety Lock:** **Press and hold** the lock icon (top right) for 1.5 seconds. A ring fills while you hold, so you can see it register. Then a gate asks you to tap three digits named in words.
 - **Locks Itself:** Parent mode closes after 60 seconds of no input, and whenever the app goes to the background. Tap the lock, or **Done** in the banner, to leave at once.
 - **Clear Banner:** A coloured strip states that cards can be edited, so the mode is never a surprise.
-- **Edit Any Card:** Tap a card, or its pencil, to rename it, re-record it, change its colour, or swap its picture. When a change replaces a file, you choose whether that file leaves the device.
+- **Settings:** A British or an American voice (British by default), a normal or a slow speed, and small, medium, or large cards.
+- **Edit Any Card:** Tap a card, or its pencil, to rename it, set the words it speaks, re-record it, change its colour or its page, or swap its picture. **Hear it** speaks the words before you save. When a change replaces a file, you choose whether that file leaves the device.
 - **Hide, Don't Delete:** The eye icon takes a card off the child's board and keeps the card and its recording. Deleting asks first, and lets you keep the picture and recording on the device even when the card goes.
-- **Drag & Drop:** Re-arrange cards by dragging them.
-- **Voice Recording:** Record your own voice (for example, "Mummy") instead of the robot voice. Play it back before you save it.
-- **Backup & Restore:** Save your cards and recordings to a zip file to share or move to another device. A restore asks before it replaces the board.
+- **Drag & Drop:** Re-arrange the cards on a page by dragging them.
+- **Pages:** Group cards into pages, each with a name and an optional symbol.
+- **Voice Recording:** Record your own voice (for example, "Mummy") instead of the robot voice. Play it back before you save it. A recording stops itself at 10 seconds.
+- **Backup & Restore:** Save your cards, recordings, pages, and settings to a dated zip file to share or move to another device. A restore asks before it replaces the board.
 - **Rich Media Support:**
   - **Giphy Integration:** Search and download animated GIFs. Offered only when a Giphy key is built in.
   - **Symbol Library:** 450+ built-in AAC symbols, searchable by name.
@@ -40,7 +46,7 @@ It utilizes evidence-based strategies for early intervention, focusing on specif
   - ~flutter_svg~ (Symbol Library)
   - ~image_picker~ (Camera/Gallery)
 - **Data & Storage:**
-  - ~shared_preferences~ (Card Data)
+  - ~shared_preferences~ (Cards, Pages, and Settings)
   - ~path_provider~ (File Storage)
   - ~archive~ (Zip Compression for Backups)
   - ~share_plus~ (Exporting Backups)
@@ -53,10 +59,17 @@ lib/
   main.dart                     app entry and the Giphy key
   theme.dart                    every colour and metric token
   models/talk_card.dart         one card, and its JSON shape
+  models/board_page.dart        one page, and which cards sit on it
+  models/board_settings.dart    the voice, the speed, and the card size
   data/card_repository.dart     load, save, backup, restore, media files
-  services/speech_service.dart  text-to-speech and recording playback
+  services/speech_service.dart  text-to-speech, recording playback, and the speaking card
   screens/board_screen.dart     the board, parent mode, and the auto-lock
-  widgets/                      cards, the lock, and the parent-facing sheets
+  widgets/parent_gate.dart      the digits a parent taps after the hold
+  widgets/page_tabs.dart        the row of page tabs
+  widgets/pages_sheet.dart      the Pages sheet
+  widgets/settings_sheet.dart   the Settings sheet
+  widgets/choices.dart          a titled row of choices, for the sheets and the editor
+  widgets/                      cards, the lock, and the other parent-facing sheets
 #+END_SRC
 
 Every colour and every metric lives in ~lib/theme.dart~. Change the palette there, not in a widget.
@@ -92,13 +105,14 @@ Every colour and every metric lives in ~lib/theme.dart~. Change the palette ther
 *** How to Edit Cards
 1. Open the app.
 2. Find the **Lock Icon** in the top right corner.
-3. **Press and hold** it for about 1.5 seconds. A ring fills as you hold. Release when parent mode opens.
-4. You now see:
+3. **Press and hold** it for about 1.5 seconds. A ring fills as you hold. Release when the gate opens. With a screen reader, use the lock's long-press action instead.
+4. The gate names three digits in words, for example "Tap seven, two, five". Tap those keys in that order. A wrong key, **Cancel**, a tap outside the gate, or 10 seconds with no key closes it. Hold the lock again to retry.
+5. You now see:
   - A "+" button to add new cards.
-  - A "Menu" (three dots) button for backups.
+  - A "Menu" (three dots) button for **Settings**, **Pages**, and backups.
   - A pencil, an eye, and a delete icon on every card.
-  - You can now **drag and drop** cards to reorder them.
-5. Tap the lock again, or **Done** in the banner, when you finish. Parent mode also closes on its own after a minute.
+  - You can now **drag and drop** cards to reorder them on their page.
+6. Tap the lock again, or **Done** in the banner, when you finish. Parent mode also closes on its own after a minute.
 
 *** How to Add a Custom Card
 1. Tap the **+ Button** (in Parent Mode).
@@ -107,9 +121,25 @@ Every colour and every metric lives in ~lib/theme.dart~. Change the palette ther
    - **Symbol Library:** Search the built-in AAC icons by name.
    - **Camera/Gallery:** Use your own photos.
 3. Check the picture in the preview. Use **Change picture** to pick a different one.
-4. Type what the card says, and pick a colour.
-5. **Record Audio (Optional):** Tap the microphone to record 2-3 seconds of your voice, then play it back.
-6. Tap **Save**.
+4. Type what the card says, and pick a colour. With more than one page, pick its **Page** too. A new card starts on the page that is open.
+5. **Words to Speak (Optional):** Fill in **What it says (optional)** when the card should say more than its word, for example "I want milk, please" on a Milk card. Tap **Hear it** to check.
+6. **Record Audio (Optional):** Tap the microphone to record 2-3 seconds of your voice, then play it back. A recording stops itself at 10 seconds, and plays in place of the words.
+7. Tap **Save**.
+
+To move a card to another page later, edit the card and pick a different **Page**.
+
+*** How to change the voice and the card size
+1. Enter **Parent Mode**.
+2. Tap the **Three Dots Menu** (top right), then **Settings**.
+3. Choose the **Voice** (British or American), the **Speed** (Normal or Slow), and the **Card size** (Small, Medium, or Large). Each change applies at once. **Hear it** plays a sample sentence.
+
+*** How to set up pages
+1. Enter **Parent Mode**.
+2. Tap the **Three Dots Menu** (top right), then **Pages**.
+3. Tap **Add a page**. Each page can be renamed, given a symbol, or moved up or down.
+4. Delete a page with its bin icon. It asks first, then moves the page's cards to the first page that remains. No card is deleted, and the last page cannot go.
+
+The tab row shows when the board has more than one page.
 
 *** How to Hide or Delete a Card
 - **Hide** (the eye icon) takes the card off your child's board and keeps it. Use this first.
@@ -127,13 +157,18 @@ outside the app's own storage, is left alone.
 1. Enter **Parent Mode**.
 2. Tap the **Three Dots Menu** (top right).
 3. Choose:
-   - **Backup Data:** Creates a ~.zip~ file of your cards and recordings. You can email it to yourself or save it to Google Drive.
-   - **Restore Data:** Select a saved backup to load its cards onto this device. This replaces every card on the device, so it asks first.
+   - **Backup Data:** Creates a ~.zip~ file of your cards, recordings, pages, and settings. Its name carries the date, for example ~toddler_talk_backup_2026-11-27.zip~. You can email it to yourself or save it to Google Drive.
+   - **Restore Data:** Select a saved backup to load its cards onto this device. This replaces every card on the device, so it asks first. When the board holds pictures or recordings of its own, a tick box offers to delete the replaced ones from the device. It is ticked by default.
 
-Pictures and recordings are re-pointed at this device on restore, so a backup made on one tablet works on another.
+Pictures and recordings are re-pointed at this device on restore, so a backup made on one tablet works on another. A backup from an older version holds no pages or settings. It restores as one page, and the device keeps its own settings.
+
+*** If the cards do not load
+If the saved cards cannot be read, the board says "The cards could not be loaded" and offers **Try again**. Try that first.
+
+In parent mode, **Start a new board** also shows. It keeps a copy of the unreadable data on the device, then replaces the board with the 12 starter cards. The app cannot show the old cards again. Your child sees only **Try again**, so a child cannot reset the board.
 
 *** ⚠️ Critical: Setting up "Kiosk Mode"
-To prevent your child from closing the app, you must enable **App Pinning** on your Android device:
+To prevent your child from closing the app, you must enable **App Pinning** on your Android device. Toddler mode ignores Back and hides the system bars, but only App Pinning stops the Home gesture:
 1. Go to *Settings > Security > Advanced > App Pinning*.
 2. Turn it *ON*.
 3. Open Toddler Talk.
@@ -163,11 +198,14 @@ flutter test
 *** What the test suite covers
 Tests are grouped by the concern they protect, and share ~test/test_harness.dart~ for plugin mocks and viewport control.
 
-| File                        | Protects                                                            |
-|-----------------------------+---------------------------------------------------------------------|
-| ~safety_test.dart~          | A toddler cannot reorder, delete, or reach any edit control          |
-| ~accessibility_test.dart~   | Screen-reader labels, and a tooltip on every icon-only control       |
-| ~layout_test.dart~          | Four viewports by three text scales, in both modes, with no overflow |
-| ~speech_test.dart~          | Speech replaces rather than queues, and recordings win over TTS      |
-| ~card_editing_test.dart~    | The editor, recordings, replaced files, and the symbol library         |
-| ~card_repository_test.dart~ | Storage round trips, and backups that cannot write outside the app   |
+| File                        | Protects                                                                                       |
+|-----------------------------+------------------------------------------------------------------------------------------------|
+| ~safety_test.dart~          | A toddler cannot edit, reorder, or leave the board; the gate, the auto-lock, and a failed load |
+| ~accessibility_test.dart~   | Screen-reader labels, a tooltip on every icon-only control, and the gate keys and prompt       |
+| ~layout_test.dart~          | Four viewports by three text scales, in both modes, with pages, the sheets, and the gate       |
+| ~speech_test.dart~          | Speech replaces rather than queues, recordings win over TTS, and the speaking ring             |
+| ~highlight_test.dart~       | The speaking ring clears when a recording ends                                                 |
+| ~settings_test.dart~        | The voice, the speed, and the card size, and that they survive a restart                       |
+| ~pages_test.dart~           | Tabs, the Pages sheet, a page delete that keeps its cards, and a reorder per page              |
+| ~card_editing_test.dart~    | The editor, speech text, recordings and their limit, replaced files, and the symbol library    |
+| ~card_repository_test.dart~ | Storage round trips, backups with pages and settings, the dated name, and a new board          |

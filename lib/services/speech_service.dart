@@ -1,22 +1,24 @@
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import '../models/board_settings.dart';
 import '../models/talk_card.dart';
 
 /// What came out of the speaker when a card was tapped.
 enum SpeechOutcome {
-  /// Text-to-speech said the label.
+  /// Text-to-speech said the card's words.
   spoken,
 
   /// A parent's own recording played.
   played,
 
-  /// The recording file was gone, so the label was spoken instead.
+  /// The recording file was gone, so the card's words were spoken instead.
   recordingMissing,
 
-  /// The recording would not play, so the label was spoken instead.
+  /// The recording would not play, so the card's words were spoken instead.
   recordingFailed,
 
   /// Nothing came out. Text-to-speech is not working on this device.
@@ -28,31 +30,43 @@ enum SpeechOutcome {
 class SpeechService {
   SpeechService({FlutterTts? tts, AudioPlayer? player})
     : _tts = tts ?? FlutterTts(),
-      _injectedPlayer = player;
+      _injectedPlayer = player {
+    // Not on cancel: the cancel of a stopped word arrives after the next card
+    // has set its id, and would clear the new ring.
+    _tts.setCompletionHandler(() => _speaking.value = null);
+    _tts.setErrorHandler((_) => _speaking.value = null);
+  }
 
   final FlutterTts _tts;
   final AudioPlayer? _injectedPlayer;
+
+  final ValueNotifier<String?> _speaking = ValueNotifier<String?>(null);
+
+  /// The id of the card whose sound plays, or null.
+  ValueListenable<String?> get speaking => _speaking;
 
   /// Built on first use. Most boards have no recordings at all, so a player is
   /// not worth creating, or stopping, until one is played.
   AudioPlayer? _player;
 
-  AudioPlayer get _audio => _player ??= _injectedPlayer ?? AudioPlayer();
+  AudioPlayer get _audio =>
+      _player ??= (_injectedPlayer ?? AudioPlayer())
+        ..onPlayerComplete.listen((_) => _speaking.value = null);
 
-  bool _ready = false;
+  /// The normal rate. The Android plugin doubles the value for the engine,
+  /// where 1.0 is normal.
+  static const double normalRate = 0.5;
 
-  /// False once [init] has found that text-to-speech does not answer, so the
-  /// board can tell the parent instead of failing silently.
-  bool get isAvailable => _ready;
+  /// Slower than normal, for a child who is learning the word.
+  static const double slowRate = 0.35;
 
-  Future<void> init() async {
+  /// Sets the voice and the speed.
+  Future<void> apply(BoardSettings settings) async {
     try {
-      await _tts.setLanguage('en-US');
-      // Slow, because a toddler is learning the word, not just hearing it.
-      await _tts.setSpeechRate(0.5);
-      _ready = true;
+      await _tts.setLanguage(settings.voice.language);
+      await _tts.setSpeechRate(settings.slow ? slowRate : normalRate);
     } on Object {
-      _ready = false;
+      // The first tap tells the parent when the voice does not work.
     }
   }
 
@@ -64,38 +78,47 @@ class SpeechService {
     final String? recording = card.audioPath;
     if (recording != null) {
       if (!File(recording).existsSync()) {
-        await _speak(card.label);
-        return _ready
+        return await _speak(card.spokenText, card.id)
             ? SpeechOutcome.recordingMissing
             : SpeechOutcome.unavailable;
       }
       try {
         await stop();
+        _speaking.value = card.id;
         await _audio.play(DeviceFileSource(recording));
         return SpeechOutcome.played;
       } on Object {
         // A file that will not decode must not leave the child in silence.
-        await _speak(card.label);
-        return _ready
+        return await _speak(card.spokenText, card.id)
             ? SpeechOutcome.recordingFailed
             : SpeechOutcome.unavailable;
       }
     }
 
-    await _speak(card.label);
-    return _ready ? SpeechOutcome.spoken : SpeechOutcome.unavailable;
+    return await _speak(card.spokenText, card.id)
+        ? SpeechOutcome.spoken
+        : SpeechOutcome.unavailable;
   }
 
-  /// Speaks a short piece of app feedback, such as entering parent mode.
-  Future<void> announce(String text) => _speak(text);
+  /// Speaks a short piece of app feedback, such as entering parent mode. No
+  /// card wears the ring while it plays.
+  Future<void> announce(String text) => _speak(text, null);
 
-  Future<void> _speak(String text) async {
-    if (text.isEmpty) return;
+  /// Returns false when text-to-speech throws on this call.
+  ///
+  /// The answer comes from this call alone. A tap before [apply] ends gets a
+  /// true answer when it speaks. One failure does not mark later taps as
+  /// failed. An empty [text] has nothing to say, which is not a failure.
+  Future<bool> _speak(String text, String? cardId) async {
+    if (text.isEmpty) return true;
     await stop();
+    _speaking.value = cardId;
     try {
       await _tts.speak(text);
+      return true;
     } on Object {
-      _ready = false;
+      _speaking.value = null;
+      return false;
     }
   }
 
@@ -105,6 +128,7 @@ class SpeechService {
   /// a parent to act on, and letting it throw used to swallow the speech that
   /// was meant to follow it.
   Future<void> stop() async {
+    _speaking.value = null;
     try {
       await _tts.stop();
     } on Object {
@@ -122,5 +146,6 @@ class SpeechService {
   Future<void> dispose() async {
     await stop();
     await _player?.dispose();
+    _speaking.dispose();
   }
 }

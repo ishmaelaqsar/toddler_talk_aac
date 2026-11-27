@@ -1,14 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:toddler_talk_aac/data/card_repository.dart';
 import 'package:toddler_talk_aac/main.dart';
+import 'package:toddler_talk_aac/models/board_page.dart';
 import 'package:toddler_talk_aac/models/talk_card.dart';
 import 'package:toddler_talk_aac/theme.dart';
+import 'package:toddler_talk_aac/widgets/card_tile.dart';
+import 'package:toddler_talk_aac/widgets/page_tabs.dart';
 import 'package:toddler_talk_aac/widgets/parent_lock.dart';
 
 /// Every text-to-speech call the app made during a test, in order.
@@ -19,6 +22,10 @@ final List<MethodCall> audioCalls = [];
 
 /// Every recorder call the app made during a test, in order.
 final List<MethodCall> recorderCalls = [];
+
+/// Every system call the app made during a test, in order: the system bars,
+/// and a Back press that leaves the app.
+final List<MethodCall> platformCalls = [];
 
 Directory? _appDocuments;
 
@@ -36,21 +43,29 @@ const String _prefsPrefix = 'flutter.';
 /// Installs the plugin mocks the app needs to boot in a test.
 ///
 /// Pass [storedCards] to start from a saved board. Pass nothing to get the
-/// first-run defaults.
-void installMocks({List<Map<String, dynamic>>? storedCards}) {
+/// first-run defaults. Pass [storedSettings] or [storedPages] to start from
+/// saved settings or saved pages. Pass [rawStoredCards] in place of
+/// [storedCards] to store text that is not a board.
+void installMocks({
+  List<Map<String, dynamic>>? storedCards,
+  String? rawStoredCards,
+  Map<String, dynamic>? storedSettings,
+  List<Map<String, dynamic>>? storedPages,
+}) {
   ttsCalls.clear();
   audioCalls.clear();
   recorderCalls.clear();
+  platformCalls.clear();
 
-  SharedPreferences.setMockInitialValues(
-    storedCards == null
-        ? {}
-        : {
-            '$_prefsPrefix${CardRepository.storageKey}': json.encode(
-              storedCards,
-            ),
-          },
-  );
+  SharedPreferences.setMockInitialValues({
+    if (storedCards != null || rawStoredCards != null)
+      '$_prefsPrefix${CardRepository.storageKey}':
+          rawStoredCards ?? json.encode(storedCards),
+    if (storedSettings != null)
+      '$_prefsPrefix${CardRepository.settingsKey}': json.encode(storedSettings),
+    if (storedPages != null)
+      '$_prefsPrefix${CardRepository.pagesKey}': json.encode(storedPages),
+  });
 
   final TestDefaultBinaryMessenger messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -68,6 +83,11 @@ void installMocks({List<Map<String, dynamic>>? storedCards}) {
     (call) async => documents.path,
   );
 
+  messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+    platformCalls.add(call);
+    return null;
+  });
+
   messenger.setMockMethodCallHandler(const MethodChannel('flutter_tts'), (
     call,
   ) async {
@@ -81,9 +101,22 @@ void installMocks({List<Map<String, dynamic>>? storedCards}) {
   ]) {
     messenger.setMockMethodCallHandler(MethodChannel(channel), (call) async {
       audioCalls.add(call);
+      // Each player listens to an event channel of its own, as on a device.
+      // Unanswered, the listen fails as soon as the test gives real time.
+      if (call.method == 'create') {
+        final Object? id = (call.arguments as Map)['playerId'];
+        messenger.setMockMethodCallHandler(
+          MethodChannel('xyz.luan/audioplayers/events/$id'),
+          (_) async => null,
+        );
+      }
       return null;
     });
   }
+  messenger.setMockMethodCallHandler(
+    const MethodChannel('xyz.luan/audioplayers.global/events'),
+    (_) async => null,
+  );
 
   messenger.setMockMethodCallHandler(
     const MethodChannel('flutter.baseflow.com/permissions/methods'),
@@ -148,6 +181,8 @@ Map<String, dynamic> storedCard({
   CardMediaKind kind = CardMediaKind.file,
   String content = 'missing.jpg',
   String? audioPath,
+  String? speech,
+  String? pageId,
   bool isVisible = true,
 }) => TalkCard(
   id: id,
@@ -155,14 +190,26 @@ Map<String, dynamic> storedCard({
   kind: kind,
   content: content,
   audioPath: audioPath,
+  speech: speech,
+  pageId: pageId,
   isVisible: isVisible,
 ).toJson();
 
-/// Enters parent mode by holding the lock, the way a parent does.
+/// A stored page in the shape the app itself writes.
+Map<String, dynamic> storedPage(String id, String name, {String? symbol}) =>
+    BoardPage(id: id, name: name, symbol: symbol).toJson();
+
+/// Enters parent mode the way a parent does: the hold, then the gate.
+Future<void> enterParentMode(WidgetTester tester) async {
+  await holdLock(tester);
+  await solveParentGate(tester);
+}
+
+/// Holds the lock until the parent gate opens.
 ///
 /// [WidgetTester.longPress] is too short: the lock asks for a deliberate
 /// [AppTokens.unlockHold] hold.
-Future<void> enterParentMode(WidgetTester tester) async {
+Future<void> holdLock(WidgetTester tester) async {
   final TestGesture hold = await tester.startGesture(
     tester.getCenter(find.byType(ParentLock)),
   );
@@ -173,6 +220,51 @@ Future<void> enterParentMode(WidgetTester tester) async {
   await tester.pump(AppTokens.unlockHold + const Duration(milliseconds: 50));
   await hold.up();
   await tester.pumpAndSettle();
+}
+
+const List<String> _digitWords = [
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+];
+
+/// The digits the open parent gate asks for, read from its prompt.
+List<int> gateCode(WidgetTester tester) {
+  final String prompt = tester
+      .widget<Text>(find.textContaining(RegExp(r'^Tap ')))
+      .data!;
+  return [
+    for (final String word in prompt.substring('Tap '.length).split(', '))
+      _digitWords.indexOf(word) + 1,
+  ];
+}
+
+/// The key for [digit] on the open parent gate.
+Finder gateKey(int digit) => find.descendant(
+  of: find.byType(AlertDialog),
+  matching: find.text('$digit'),
+);
+
+/// Taps [digit] on the open parent gate. A key can sit below the fold on a
+/// small screen, so it is scrolled into view first.
+Future<void> tapGateKey(WidgetTester tester, int digit) async {
+  await tester.ensureVisible(gateKey(digit));
+  await tester.pumpAndSettle();
+  await tester.tap(gateKey(digit));
+  await tester.pumpAndSettle();
+}
+
+/// Taps the digits the open parent gate asks for, in order.
+Future<void> solveParentGate(WidgetTester tester) async {
+  for (final int digit in gateCode(tester)) {
+    await tapGateKey(tester, digit);
+  }
 }
 
 /// Drags the card labelled [label] one place to the right, holding first so a
@@ -190,13 +282,55 @@ Future<void> dragCardRight(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
 }
 
-/// The labels of the saved board, in saved order.
-Future<List<String>> savedOrder() async {
+/// The saved board, in saved order.
+Future<List<TalkCard>> savedCards() async {
   final SharedPreferences prefs = await SharedPreferences.getInstance();
   final String? raw = prefs.getString(CardRepository.storageKey);
   if (raw == null) return [];
-  return CardRepository().decode(raw).map((c) => c.label).toList();
+  return CardRepository().decode(raw);
 }
+
+/// The labels of the saved board, in saved order.
+Future<List<String>> savedOrder() async =>
+    (await savedCards()).map((c) => c.label).toList();
+
+/// Opens the settings sheet from the menu. Parent mode must be open.
+Future<void> openSettings(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Settings and backup'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Settings'));
+  await tester.pumpAndSettle();
+}
+
+/// Opens the pages sheet from the menu. Parent mode must be open.
+Future<void> openPages(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Settings and backup'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Pages'));
+  await tester.pumpAndSettle();
+}
+
+/// Whether the card labelled [label] wears the speaking ring.
+bool speakingRingOn(WidgetTester tester, String label) => tester
+    .widgetList<DecoratedBox>(
+      find.descendant(
+        of: find.widgetWithText(CardTile, label),
+        matching: find.byType(DecoratedBox),
+      ),
+    )
+    .any(
+      (box) =>
+          box.decoration is BoxDecoration &&
+          (box.decoration as BoxDecoration).border ==
+              Border.all(
+                color: AppTokens.speakingRing,
+                width: AppTokens.speakingRingWidth,
+              ),
+    );
+
+/// The tab named [name] in the page tab row.
+Finder pageTab(String name) =>
+    find.descendant(of: find.byType(PageTabs), matching: find.text(name));
 
 /// Sends the app to the background and brings it back.
 ///

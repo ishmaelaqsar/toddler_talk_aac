@@ -44,6 +44,11 @@ abstract final class AppTokens {
   /// obvious at a glance.
   static const Color editableBorder = Color(0xFF8A4B00);
 
+  /// The ring on the card whose sound plays, so the child sees which card
+  /// speaks. Reaches 7.3:1 on the darkest card fill. [action] reaches only
+  /// 2.9:1 there.
+  static const Color speakingRing = ink;
+
   /// The toggle that hides a card from the child without deleting it.
   static const Color hidden = Color(0xFF5A5F62);
 
@@ -62,9 +67,29 @@ abstract final class AppTokens {
   /// The minimum touch target, per the Material accessibility guideline.
   static const double minTouchTarget = 48.0;
 
-  /// The target width of one card. The grid fits as many as it can, so a card
-  /// stays a large motor target on a phone and on a tablet alike.
-  static const double tileExtent = 260.0;
+  static const double editableBorderWidth = 3.0;
+
+  /// Wider than [editableBorderWidth], so the ring reads at a glance. It does
+  /// not move, so it does not pull the eye away from the picture.
+  static const double speakingRingWidth = 4.0;
+
+  /// The minimum height of a page tab. Larger than [minTouchTarget], because a
+  /// toddler taps it.
+  static const double tabMinHeight = 64.0;
+
+  /// The widest a page tab grows. A longer name ends in an ellipsis, so the
+  /// next tab shows at the edge and the row reads as one that scrolls.
+  static const double tabMaxWidth = 240.0;
+
+  static const double tabSymbolSize = 32.0;
+
+  /// The height of a key on the parent gate. Its width is a third of the
+  /// dialog.
+  static const double gateKeySize = 64.0;
+
+  /// The border of the open tab. Thicker than the others, so the open tab
+  /// differs in shape as well as in colour.
+  static const double tabOpenBorder = 3.0;
 
   /// The target width of one symbol in the picker. Smaller than a card,
   /// because the picker is a parent-facing browse list.
@@ -81,12 +106,34 @@ abstract final class AppTokens {
   /// toddler's idle press does not open it.
   static const Duration unlockHold = Duration(milliseconds: 1500);
 
+  /// A recording stops itself after this long. A card says a word or a short
+  /// phrase.
+  static const Duration recordingLimit = Duration(seconds: 10);
+
+  /// The parent gate closes itself after this long with no key, so a child
+  /// who reaches it gets the board back.
+  static const Duration gateTimeout = Duration(seconds: 10);
+
   /// Parent mode returns to toddler mode after this much inactivity.
   static const Duration parentModeTimeout = Duration(seconds: 60);
 
   static const double cardRadius = 24.0;
   static const double sheetRadius = 16.0;
   static const double gap = 16.0;
+}
+
+/// The card sizes a parent can choose from.
+///
+/// Each [extent] is the target width of one card. The grid fits as many as it
+/// can, so a card stays a large motor target on a phone and on a tablet alike.
+enum CardSize {
+  small(180),
+  medium(260),
+  large(400);
+
+  const CardSize(this.extent);
+
+  final double extent;
 }
 
 abstract final class AppTheme {

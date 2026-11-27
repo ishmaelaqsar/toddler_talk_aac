@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:giphy_get/giphy_get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -11,13 +12,19 @@ import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/card_repository.dart';
+import '../models/board_page.dart';
+import '../models/board_settings.dart';
 import '../models/talk_card.dart';
 import '../services/speech_service.dart';
 import '../theme.dart';
 import '../widgets/add_card_sheet.dart';
 import '../widgets/card_editor_dialog.dart';
 import '../widgets/card_tile.dart';
+import '../widgets/page_tabs.dart';
+import '../widgets/pages_sheet.dart';
+import '../widgets/parent_gate.dart';
 import '../widgets/parent_lock.dart';
+import '../widgets/settings_sheet.dart';
 import '../widgets/symbol_picker.dart';
 
 /// The board the child taps, and the editing surface the parent unlocks.
@@ -37,13 +44,26 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
   final ImagePicker _picker = ImagePicker();
 
   List<TalkCard> _cards = [];
+  List<BoardPage> _pages = [BoardPage.home];
+
+  /// The page the parent or the child last opened. Null opens the first page
+  /// with a tab.
+  String? _openPageId;
+
+  BoardSettings _settings = const BoardSettings();
   bool _loading = true;
+
+  /// True when the stored board could not be read. Nothing saves the board
+  /// while this holds, so a retry reads the stored value as it was.
+  bool _loadFailed = false;
+
   bool _parentMode = false;
   String? _busyMessage;
 
-  /// Counts the picker, camera, and editor flows that are open. Those flows
-  /// send the app to the background, and backgrounding otherwise locks parent
-  /// mode, which would drop the parent out mid-edit.
+  /// Counts the flows that are open: the pickers, the camera, the editor, and
+  /// the sheets. A picker or the camera sends the app to the background, and
+  /// backgrounding otherwise locks parent mode, which would drop the parent
+  /// out mid-edit.
   int _openFlows = 0;
 
   Timer? _lockTimer;
@@ -52,14 +72,32 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
 
   bool get _giphyEnabled => widget.giphyApiKey.isNotEmpty;
 
-  List<TalkCard> get _childVisibleCards =>
-      _cards.where((c) => c.isVisible).toList();
+  /// The pages with a tab in the current mode. A parent sees every page. A
+  /// child sees only a page with a card to tap.
+  List<BoardPage> get _shownPages => _parentMode
+      ? _pages
+      : [
+          for (final BoardPage page in _pages)
+            if (cardsOnPage(_cards, _pages, page.id).any((c) => c.isVisible))
+              page,
+        ];
+
+  /// The open page. When it has no tab, the first page with a tab stands in.
+  /// Null only for a child with no card to tap.
+  BoardPage? get _openPage {
+    final List<BoardPage> shown = _shownPages;
+    if (shown.isEmpty) return null;
+    return shown.firstWhere(
+      (page) => page.id == _openPageId,
+      orElse: () => shown.first,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _speech.init();
+    _applySystemUi();
     _load();
   }
 
@@ -78,23 +116,60 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     final bool leaving =
         state == AppLifecycleState.paused || state == AppLifecycleState.hidden;
     if (leaving && _parentMode && _openFlows == 0) _lock(announce: false);
+    // Android can show the system bars again after a resume.
+    if (state == AppLifecycleState.resumed && !_parentMode) _applySystemUi();
   }
 
   Future<void> _load() async {
-    final List<TalkCard> cards = await _repository.load();
+    final List<TalkCard> cards;
+    final BoardSettings settings;
+    final List<BoardPage> pages;
+    try {
+      cards = await _repository.load();
+      settings = await _repository.loadSettings();
+      pages = await _repository.loadPages();
+    } on Object catch (error) {
+      debugPrint('Load failed: $error');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = true;
+        });
+      }
+      return;
+    }
     if (!mounted) return;
+    // Not awaited: a slow voice engine must not hold back the board.
+    _speech.apply(settings);
     setState(() {
       _cards = cards;
+      _pages = pages;
+      _settings = settings;
       _loading = false;
     });
+  }
+
+  void _retryLoad() {
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
+    _load();
+  }
+
+  Future<void> _startNewBoard() async {
+    await _repository.startNewBoard();
+    if (mounted) _retryLoad();
   }
 
   Future<void> _persist() => _repository.save(_cards);
 
   // --- PARENT MODE ---
 
-  void _unlock() {
+  Future<void> _unlock() async {
+    if (!await showParentGate(context) || !mounted) return;
     setState(() => _parentMode = true);
+    _applySystemUi();
     _speech.announce('Parent mode');
     _restartLockTimer();
   }
@@ -103,14 +178,36 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     _lockTimer?.cancel();
     _lockTimer = null;
     if (!_parentMode) return;
-    setState(() => _parentMode = false);
+    setState(() {
+      _parentMode = false;
+      // A page with no card left for the child has no tab, so the first page
+      // with a tab opens in its place, and stays open.
+      _openPageId = _openPage?.id;
+    });
+    _applySystemUi();
     if (announce) _speech.announce('Editing locked');
+  }
+
+  /// Hides the system bars from the child, so a swipe from the edge does not
+  /// take them out of the app. A parent gets the bars back.
+  void _applySystemUi() => SystemChrome.setEnabledSystemUIMode(
+    _parentMode ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+  );
+
+  /// Opens [page]. A child also hears its name, the way a card speaks.
+  void _openTab(BoardPage page) {
+    setState(() => _openPageId = page.id);
+    if (!_parentMode) _speech.announce(page.name);
   }
 
   /// Parent mode closes itself after a spell of no input, so a parent who
   /// forgets does not leave delete buttons under the child's fingers.
+  ///
+  /// No timer runs while a flow is open, because the parent is busy in it.
+  /// The outermost flow starts the timer when it ends.
   void _restartLockTimer() {
     _lockTimer?.cancel();
+    if (_openFlows > 0) return;
     _lockTimer = Timer(AppTokens.parentModeTimeout, () {
       if (!mounted || !_parentMode) return;
       _lock();
@@ -118,10 +215,12 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     });
   }
 
-  /// Runs [action] with the auto-lock paused, because the flow it opens sends
-  /// the app to the background.
+  /// Runs [action] with the auto-lock paused. The flow it opens is a route of
+  /// its own, or it sends the app to the background, so the board sees none
+  /// of the parent's touches until it ends.
   Future<T> _inFlow<T>(Future<T> Function() action) async {
     _openFlows++;
+    _lockTimer?.cancel();
     try {
       return await action();
     } finally {
@@ -214,9 +313,16 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
       return null;
     }
 
-    final XFile? photo = await _picker.pickImage(
-      source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-    );
+    // A camera photo is far larger than a card needs. A gallery pick keeps its
+    // size, because a resize drops the animation from a GIF.
+    final XFile? photo = fromCamera
+        ? await _picker.pickImage(
+            source: ImageSource.camera,
+            maxWidth: 1600,
+            maxHeight: 1600,
+            imageQuality: 85,
+          )
+        : await _picker.pickImage(source: ImageSource.gallery);
     if (photo == null) return null;
 
     final String path = await _repository.importMedia(photo.path);
@@ -235,8 +341,11 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
           label: media.suggestedLabel ?? '',
           kind: media.kind,
           content: media.content,
+          pageId: _openPage?.id,
         ),
         repository: _repository,
+        onHear: _speech.announce,
+        pages: _pages,
         onChangeMedia: _chooseMedia,
       ),
     );
@@ -259,6 +368,8 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
         context,
         card: card,
         repository: _repository,
+        onHear: _speech.announce,
+        pages: _pages,
         onChangeMedia: _chooseMedia,
       ),
     );
@@ -295,57 +406,91 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
 
   /// Asks whether to delete [card], and whether its files go too.
   ///
-  /// Returns null when the parent keeps the card. Otherwise it returns their
-  /// answer to the file question, which is only asked when the card owns a
-  /// file. A bundled symbol owns nothing.
+  /// The file question is only asked when the card owns a file. A bundled
+  /// symbol owns nothing.
   Future<bool?> _confirmDelete(TalkCard card) {
     final bool ownsFiles =
         card.kind == CardMediaKind.file || card.audioPath != null;
-    bool deleteFiles = true;
-
-    return showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocalState) => AlertDialog(
-          title: Text('Delete ${card.label}?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'The card goes for good. To take it off the board for now, '
-                'hide it instead.',
-              ),
-              if (ownsFiles)
-                CheckboxListTile(
-                  value: deleteFiles,
-                  onChanged: (value) =>
-                      setLocalState(() => deleteFiles = value ?? deleteFiles),
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: Text(
-                    card.audioPath == null
-                        ? 'Delete its picture from this device'
-                        : 'Delete its picture and recording from this device',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Keep'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, ownsFiles && deleteFiles),
-              style: TextButton.styleFrom(foregroundColor: AppTokens.danger),
-              child: const Text('Delete'),
-            ),
-          ],
-        ),
-      ),
+    return _confirm(
+      title: 'Delete ${card.label}?',
+      message:
+          'The card goes for good. To take it off the board for now, '
+          'hide it instead.',
+      action: 'Delete',
+      tickBox: !ownsFiles
+          ? null
+          : (card.audioPath == null
+                ? 'Delete its picture from this device'
+                : 'Delete its picture and recording from this device'),
     );
+  }
+
+  // --- SETTINGS ---
+
+  Future<void> _openSettings() => _inFlow(
+    () => showSettingsSheet(
+      context,
+      settings: _settings,
+      onChanged: _changeSettings,
+      onHear: _speech.announce,
+    ),
+  );
+
+  void _changeSettings(BoardSettings settings) {
+    setState(() => _settings = settings);
+    _speech.apply(settings);
+    _repository.saveSettings(settings);
+  }
+
+  // --- PAGES ---
+
+  Future<void> _openPagesSheet() => _inFlow(
+    () => showPagesSheet(
+      context,
+      pages: () => _pages,
+      onChanged: _changePages,
+      onDelete: _deletePage,
+    ),
+  );
+
+  void _changePages(List<BoardPage> pages) {
+    setState(() => _pages = pages);
+    _repository.savePages(pages);
+  }
+
+  /// Deletes [page] once the parent agrees. Its cards move to the first page
+  /// that remains, each as hidden or shown as it was, so no card is lost.
+  Future<void> _deletePage(BoardPage page) async {
+    final List<BoardPage> remaining = [
+      for (final BoardPage other in _pages)
+        if (other.id != page.id) other,
+    ];
+    final BoardPage target = remaining.first;
+    final int moving = cardsOnPage(_cards, _pages, page.id).length;
+    final bool? confirmed = await _confirm(
+      title: 'Delete the ${page.name} page?',
+      message: switch (moving) {
+        0 => 'It has no cards.',
+        1 => 'Its 1 card moves to ${target.name}. No card is deleted.',
+        _ => 'Its $moving cards move to ${target.name}. No card is deleted.',
+      },
+      action: 'Delete',
+    );
+    if (confirmed == null || !mounted) return;
+
+    setState(() {
+      _cards = [
+        for (final TalkCard card in _cards)
+          pageIdOf(card, _pages) == page.id
+              ? card.copyWith(pageId: target.id)
+              : card,
+      ];
+      _pages = remaining;
+      if (_openPageId == page.id) _openPageId = target.id;
+    });
+    // The cards first, so a card never points at a page that is gone.
+    await _persist();
+    await _repository.savePages(_pages);
   }
 
   // --- BACKUP ---
@@ -354,7 +499,11 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     try {
       final String zipPath = await _run(
         'Packing your cards...',
-        () => _repository.exportBackup(_cards),
+        () => _repository.exportBackup(
+          _cards,
+          pages: _pages,
+          settings: _settings,
+        ),
       );
       if (!mounted) return;
       await SharePlus.instance.share(
@@ -367,15 +516,8 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
   });
 
   Future<void> _restore() => _inFlow(() async {
-    final bool confirmed = await _confirm(
-      title: 'Restore a backup?',
-      message:
-          'Every card on this device is replaced by the cards in the backup '
-          'file. Make a backup first if you want to keep them.',
-      action: 'Restore',
-      destructive: true,
-    );
-    if (!confirmed || !mounted) return;
+    final bool? deleteFiles = await _confirmRestore();
+    if (deleteFiles == null || !mounted) return;
 
     final FilePickerResult? picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -384,21 +526,52 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     final String? path = picked?.files.single.path;
     if (path == null || !mounted) return;
 
+    final List<TalkCard> replaced = _cards;
+    final Backup backup;
     try {
-      final List<TalkCard> cards = await _run(
+      backup = await _run(
         'Restoring your cards...',
         () => _repository.importBackup(File(path)),
       );
       if (!mounted) return;
-      setState(() => _cards = cards);
+      final BoardSettings? settings = backup.settings;
+      if (settings != null) _speech.apply(settings);
+      setState(() {
+        _cards = backup.cards;
+        _pages = backup.pages;
+        _settings = settings ?? _settings;
+        _openPageId = backup.pages.first.id;
+      });
       _tell('Your cards are back.');
     } on BackupException catch (error) {
       if (mounted) _tell(error.message);
+      return;
     } on Object catch (error) {
       debugPrint('Restore failed: $error');
       if (mounted) _tell('That backup could not be read.');
+      return;
+    }
+    // Outside the try, so a failed delete is not reported as a failed restore.
+    if (deleteFiles) {
+      await _repository.deleteReplacedMedia(replaced, backup.cards);
     }
   });
+
+  /// Asks whether to replace the board, and whether the replaced cards' files
+  /// go too.
+  ///
+  /// The file question is only asked when the board owns a file.
+  Future<bool?> _confirmRestore() => _confirm(
+    title: 'Restore a backup?',
+    message:
+        'Every card on this device is replaced by the cards in the backup '
+        'file. Make a backup first if you want to keep them.',
+    action: 'Restore',
+    tickBox:
+        _cards.any((c) => c.kind == CardMediaKind.file || c.audioPath != null)
+        ? "Delete the replaced cards' pictures and recordings from this device"
+        : null,
+  );
 
   /// Runs [action] behind a scrim, so a long zip or download does not look
   /// like the app has frozen.
@@ -413,33 +586,58 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
 
   // --- DIALOGS ---
 
-  Future<bool> _confirm({
+  /// Asks the parent to confirm a destructive [action].
+  ///
+  /// Returns null when the parent keeps things as they are. Otherwise it
+  /// returns their answer to the [tickBox] question, ticked by default, or
+  /// false when there is no question.
+  Future<bool?> _confirm({
     required String title,
     required String message,
     required String action,
-    bool destructive = false,
-  }) async {
-    final bool? answer = await showDialog<bool>(
+    String? tickBox,
+  }) {
+    bool ticked = true;
+
+    return showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocalState) => AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(message),
+              if (tickBox != null)
+                CheckboxListTile(
+                  value: ticked,
+                  onChanged: (value) =>
+                      setLocalState(() => ticked = value ?? ticked),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: Text(
+                    tickBox,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: destructive
-                ? TextButton.styleFrom(foregroundColor: AppTokens.danger)
-                : null,
-            child: Text(action),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Keep'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(context, tickBox != null && ticked),
+              style: TextButton.styleFrom(foregroundColor: AppTokens.danger),
+              child: Text(action),
+            ),
+          ],
+        ),
       ),
     );
-    return answer ?? false;
   }
 
   void _tell(String message) => ScaffoldMessenger.of(
@@ -450,59 +648,79 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Listener(
-      // Any touch counts as parent activity, so the auto-lock only fires after
-      // real inactivity.
-      onPointerDown: (_) {
-        if (_parentMode) _restartLockTimer();
-      },
-      child: Stack(
-        children: [
-          Scaffold(
-            appBar: AppBar(
-              title: const Text('Toddler Talk'),
-              actions: [
-                if (_parentMode) ...[
-                  PopupMenuButton<String>(
-                    tooltip: 'Backup and restore',
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: (value) =>
-                        value == 'backup' ? _backup() : _restore(),
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: 'backup',
-                        child: Text('Backup Data'),
-                      ),
-                      PopupMenuItem(
-                        value: 'restore',
-                        child: Text('Restore Data'),
-                      ),
-                    ],
+    final List<BoardPage> tabs = _shownPages;
+    final BoardPage? open = _openPage;
+    // A child's Back press does nothing. A dialog or a sheet is a route of its
+    // own, so Back closes it as usual.
+    return PopScope(
+      canPop: _parentMode,
+      child: Listener(
+        // Any touch counts as parent activity, so the auto-lock only fires
+        // after real inactivity.
+        onPointerDown: (_) {
+          if (_parentMode) _restartLockTimer();
+        },
+        child: Stack(
+          children: [
+            Scaffold(
+              appBar: AppBar(
+                title: const Text('Toddler Talk'),
+                actions: [
+                  if (_parentMode && !_loadFailed) ...[
+                    PopupMenuButton<String>(
+                      tooltip: 'Settings and backup',
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (value) => switch (value) {
+                        'settings' => _openSettings(),
+                        'pages' => _openPagesSheet(),
+                        'backup' => _backup(),
+                        _ => _restore(),
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: 'settings',
+                          child: Text('Settings'),
+                        ),
+                        PopupMenuItem(value: 'pages', child: Text('Pages')),
+                        PopupMenuItem(
+                          value: 'backup',
+                          child: Text('Backup Data'),
+                        ),
+                        PopupMenuItem(
+                          value: 'restore',
+                          child: Text('Restore Data'),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle, size: 32),
+                      color: AppTokens.action,
+                      tooltip: 'Add a card',
+                      onPressed: _addCard,
+                    ),
+                  ],
+                  ParentLock(
+                    unlocked: _parentMode,
+                    onUnlock: _unlock,
+                    onLock: _lock,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle, size: 32),
-                    color: AppTokens.action,
-                    tooltip: 'Add a card',
-                    onPressed: _addCard,
-                  ),
+                  const SizedBox(width: 4),
                 ],
-                ParentLock(
-                  unlocked: _parentMode,
-                  onUnlock: _unlock,
-                  onLock: _lock,
-                ),
-                const SizedBox(width: 4),
-              ],
+              ),
+              body: Column(
+                children: [
+                  if (_parentMode) _banner(),
+                  // One tab alone would be a control that does nothing, so a
+                  // board with one page looks as it always has.
+                  if (!_loading && open != null && tabs.length > 1)
+                    PageTabs(pages: tabs, openId: open.id, onOpen: _openTab),
+                  Expanded(child: _board(open)),
+                ],
+              ),
             ),
-            body: Column(
-              children: [
-                if (_parentMode) _banner(),
-                Expanded(child: _board()),
-              ],
-            ),
-          ),
-          if (_busyMessage != null) _scrim(_busyMessage!),
-        ],
+            if (_busyMessage != null) _scrim(_busyMessage!),
+          ],
+        ),
       ),
     );
   }
@@ -539,15 +757,20 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     ),
   );
 
-  Widget _board() {
+  Widget _board(BoardPage? page) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loadFailed) return _loadError();
 
-    final List<TalkCard> shown = _parentMode ? _cards : _childVisibleCards;
-    if (shown.isEmpty) return _emptyState();
+    final List<TalkCard> shown = [
+      if (page != null)
+        for (final TalkCard card in cardsOnPage(_cards, _pages, page.id))
+          if (_parentMode || card.isVisible) card,
+    ];
+    if (page == null || shown.isEmpty) return _emptyState();
 
     final SliverGridDelegate delegate =
         SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: AppTokens.tileExtent,
+          maxCrossAxisExtent: _settings.cardSize.extent,
           crossAxisSpacing: AppTokens.gap,
           mainAxisSpacing: AppTokens.gap,
           // A card is taller in parent mode, to make room for its edit row
@@ -556,11 +779,15 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
         );
     const EdgeInsets padding = EdgeInsets.all(AppTokens.gap);
 
+    // A key per page, so each page opens at the top of its own scroll.
+    final Key key = ValueKey(page.id);
+
     // Toddler mode uses a plain grid. A reorderable grid keeps its long-press
     // drag whatever its drag widget draws, so the child could rearrange the
     // board and the change was saved.
     if (!_parentMode) {
       return GridView.builder(
+        key: key,
         padding: padding,
         gridDelegate: delegate,
         itemCount: shown.length,
@@ -569,11 +796,20 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     }
 
     return ReorderableGridView.builder(
+      key: key,
       padding: padding,
       gridDelegate: delegate,
       itemCount: shown.length,
       onReorder: (oldIndex, newIndex) {
-        setState(() => _cards.insert(newIndex, _cards.removeAt(oldIndex)));
+        setState(
+          () => _cards = reorderWithinPage(
+            _cards,
+            _pages,
+            page.id,
+            oldIndex,
+            newIndex,
+          ),
+        );
         _restartLockTimer();
         _persist();
       },
@@ -589,6 +825,7 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
     onEdit: () => _editCard(card),
     onToggleVisible: () => _toggleVisible(card),
     onDelete: () => _deleteCard(card),
+    speaking: _speech.speaking,
   );
 
   Widget _emptyState() => SingleChildScrollView(
@@ -605,7 +842,7 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
           const SizedBox(height: AppTokens.gap),
           Text(
             _parentMode
-                ? 'The board is empty'
+                ? (_cards.isEmpty ? 'The board is empty' : 'This page is empty')
                 : 'Ask a grown-up to add some cards',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleMedium,
@@ -623,7 +860,48 @@ class _BoardScreenState extends State<BoardScreen> with WidgetsBindingObserver {
             ElevatedButton.icon(
               onPressed: _addCard,
               icon: const Icon(Icons.add),
-              label: const Text('Add your first card'),
+              label: Text(
+                _cards.isEmpty ? 'Add your first card' : 'Add a card',
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  /// A child gets no new board, because it puts the starter cards in place of
+  /// the old ones.
+  Widget _loadError() => SingleChildScrollView(
+    child: Padding(
+      padding: const EdgeInsets.all(AppTokens.gap * 2),
+      child: Column(
+        children: [
+          Text(
+            'The cards could not be loaded',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _parentMode
+                ? 'Try again first. A new board starts from the starter cards, '
+                      'and keeps a copy of the old cards on this device.'
+                : 'Ask a grown-up to help.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: AppTokens.gap),
+          ElevatedButton.icon(
+            onPressed: _retryLoad,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Try again'),
+          ),
+          if (_parentMode) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _startNewBoard,
+              child: const Text('Start a new board'),
             ),
           ],
         ],

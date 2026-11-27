@@ -4,12 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:toddler_talk_aac/models/talk_card.dart';
+import 'package:toddler_talk_aac/theme.dart';
+import 'package:toddler_talk_aac/widgets/card_tile.dart';
 import 'package:toddler_talk_aac/widgets/symbol_picker.dart';
 
 import 'test_harness.dart';
 
 /// A card could only be added or deleted. Renaming one, re-recording it, or
-/// swapping its picture meant deleting it and starting again.
+/// swapping its picture meant deleting it and starting again. A restore left
+/// the replaced board's files on the device. A card could only say its label.
+/// The editor raised the keyboard over every card, and a recording had no
+/// time limit.
 void main() {
   List<Map<String, dynamic>> oneCard() => [storedCard(id: 'a', label: 'Cup')];
 
@@ -24,7 +29,7 @@ void main() {
 
       expect(find.text('Card details'), findsOneWidget);
       expect(
-        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        tester.widget<TextField>(find.byType(TextField).first).controller?.text,
         'Cup',
       );
     });
@@ -47,7 +52,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Edit Cup'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Milk');
+      await tester.enterText(find.byType(TextField).first, 'Milk');
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
@@ -62,7 +67,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Edit Cup'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Milk');
+      await tester.enterText(find.byType(TextField).first, 'Milk');
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
 
@@ -76,7 +81,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Edit Cup'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), '   ');
+      await tester.enterText(find.byType(TextField).first, '   ');
       await tester.pumpAndSettle();
 
       // Save used to look live and then do nothing at all.
@@ -110,6 +115,110 @@ void main() {
       expect(find.byTooltip('Record your voice'), findsOneWidget);
       expect(
         find.text('Optional. Without one, the robot voice reads the word.'),
+        findsOneWidget,
+      );
+    });
+
+    bool labelHasFocus(WidgetTester tester) => tester
+        .widget<EditableText>(find.byType(EditableText).first)
+        .focusNode
+        .hasFocus;
+
+    // The keyboard covered most of the dialog, so a parent who opened a card
+    // to change its colour had to close the keyboard first.
+    testWidgets('it leaves the keyboard down when the card has a word', (
+      tester,
+    ) async {
+      installMocks(storedCards: oneCard());
+      await pumpApp(tester);
+      await enterParentMode(tester);
+
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+
+      expect(labelHasFocus(tester), isFalse);
+    });
+
+    testWidgets('it puts the cursor in an empty label', (tester) async {
+      installMocks(
+        storedCards: [storedCard(id: 'a', label: '')],
+      );
+      await pumpApp(tester);
+      await enterParentMode(tester);
+
+      await tester.tap(find.byType(CardTile));
+      await tester.pumpAndSettle();
+
+      expect(labelHasFocus(tester), isTrue);
+    });
+  });
+
+  group('the speech text', () {
+    Finder speechField() =>
+        find.widgetWithText(TextField, 'What it says (optional)');
+
+    Future<void> openEditor(WidgetTester tester) async {
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+    }
+
+    List<String> spokenWords() => ttsCalls
+        .where((c) => c.method == 'speak')
+        .map((c) => c.arguments.toString())
+        .toList();
+
+    testWidgets('is saved with the card', (tester) async {
+      installMocks(storedCards: oneCard());
+      await openEditor(tester);
+
+      await tester.enterText(speechField(), 'Can I have a drink?');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect((await savedCards()).single.speech, 'Can I have a drink?');
+    });
+
+    testWidgets('cleared, it gives the card back its label', (tester) async {
+      installMocks(
+        storedCards: [storedCard(id: 'a', label: 'Cup', speech: 'A drink')],
+      );
+      await openEditor(tester);
+
+      await tester.enterText(speechField(), '');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      final TalkCard saved = (await savedCards()).single;
+      expect(saved.speech, isNull);
+      expect(saved.spokenText, 'Cup');
+    });
+
+    testWidgets('Hear it speaks the speech text, or the label when it is '
+        'empty', (tester) async {
+      installMocks(storedCards: oneCard());
+      await openEditor(tester);
+
+      await tester.tap(find.text('Hear it'));
+      await tester.pumpAndSettle();
+      expect(spokenWords().last, 'Cup');
+
+      await tester.enterText(speechField(), 'A drink, please');
+      await tester.tap(find.text('Hear it'));
+      await tester.pumpAndSettle();
+      expect(spokenWords().last, 'A drink, please');
+    });
+
+    testWidgets('it says that a recording plays in its place', (tester) async {
+      installMocks(storedCards: oneCard());
+      await openEditor(tester);
+
+      expect(
+        find.textContaining(
+          'A recording, when there is one, plays in place '
+          'of this text.',
+        ),
         findsOneWidget,
       );
     });
@@ -272,6 +381,40 @@ void main() {
       await settleFileWork(tester);
 
       expect(original.existsSync(), isTrue);
+    });
+
+    testWidgets('the timer shows the time limit', (tester) async {
+      installMocks(storedCards: oneCard());
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Record your voice'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(find.text('0:03 / 0:10'), findsOneWidget);
+    });
+
+    // A take had no end, so a take a parent forgot kept recording.
+    testWidgets('it stops itself at the limit, and keeps the take', (
+      tester,
+    ) async {
+      installMocks(storedCards: oneCard());
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Edit Cup'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Record your voice'));
+      await tester.pumpAndSettle();
+      await tester.pump(AppTokens.recordingLimit);
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Stop recording'), findsNothing);
+      expect(find.byTooltip('Play the recording'), findsOneWidget);
+      expect(recorderCalls.where((c) => c.method == 'stop'), hasLength(1));
     });
   });
 
@@ -447,7 +590,7 @@ void main() {
       await enterParentMode(tester);
       await tester.tap(find.byTooltip('Edit Cup'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Milk');
+      await tester.enterText(find.byType(TextField).first, 'Milk');
       await tester.pumpAndSettle();
 
       expect(find.byType(CheckboxListTile), findsNothing);
@@ -574,6 +717,55 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(await savedOrder(), isEmpty);
+    });
+  });
+
+  group('restoring a backup', () {
+    Future<void> openRestore(WidgetTester tester) async {
+      await pumpApp(tester);
+      await enterParentMode(tester);
+      await tester.tap(find.byTooltip('Settings and backup'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Restore Data'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('offers to delete the old files, ticked by default', (
+      tester,
+    ) async {
+      installMocks(storedCards: oneCard());
+      await openRestore(tester);
+
+      // The replaced board's photos stayed on the device with nothing to
+      // reach them.
+      expect(
+        find.text(
+          "Delete the replaced cards' pictures and recordings from this "
+          'device',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+        isTrue,
+      );
+    });
+
+    testWidgets('a board of bundled symbols is offered no box', (tester) async {
+      installMocks(
+        storedCards: [
+          storedCard(
+            id: 'a',
+            label: 'Cup',
+            kind: CardMediaKind.asset,
+            content: 'assets/symbols/water.svg',
+          ),
+        ],
+      );
+      await openRestore(tester);
+
+      expect(find.text('Restore a backup?'), findsOneWidget);
+      expect(find.byType(CheckboxListTile), findsNothing);
     });
   });
 }
